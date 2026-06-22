@@ -12,13 +12,17 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"interview-agent/internal/agent"
 	"interview-agent/internal/config"
 	"interview-agent/internal/interview"
+	"interview-agent/internal/knowledge"
+	"interview-agent/internal/learning"
 	resumeparser "interview-agent/internal/parser"
+	"interview-agent/internal/skills"
 )
 
 const maxUploadSize = 10 << 20
@@ -30,10 +34,13 @@ type Server struct {
 	config     *config.Store
 	interviews *interview.Service
 	evaluator  *agent.EinoEvaluator
+	skills     *skills.Catalog
+	knowledge  *knowledge.Store
+	learning   *learning.Service
 }
 
-func New(logger *slog.Logger, dataDir, token string, configStore *config.Store, service *interview.Service, evaluator *agent.EinoEvaluator) *Server {
-	return &Server{logger: logger, dataDir: dataDir, token: token, config: configStore, interviews: service, evaluator: evaluator}
+func New(logger *slog.Logger, dataDir, token string, configStore *config.Store, service *interview.Service, evaluator *agent.EinoEvaluator, skillCatalog *skills.Catalog, knowledgeStore *knowledge.Store, learningService *learning.Service) *Server {
+	return &Server{logger: logger, dataDir: dataDir, token: token, config: configStore, interviews: service, evaluator: evaluator, skills: skillCatalog, knowledge: knowledgeStore, learning: learningService}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -47,6 +54,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/config/model", s.getModelConfig)
 	mux.HandleFunc("PUT /api/v1/config/model", s.putModelConfig)
 	mux.HandleFunc("POST /api/v1/config/model/test", s.testModelConfig)
+	mux.HandleFunc("GET /api/v1/skills", s.listSkills)
+	mux.HandleFunc("GET /api/v1/knowledge/bases", s.listKnowledgeBases)
+	mux.HandleFunc("GET /api/v1/knowledge/bases/{id}/qa", s.searchKnowledge)
+	mux.HandleFunc("POST /api/v1/knowledge/bases/{id}/qa", s.putKnowledge)
+	mux.HandleFunc("GET /api/v1/learning/resources", s.listLearningResources)
+	mux.HandleFunc("POST /api/v1/learning/refresh", s.refreshLearningResources)
+	mux.HandleFunc("PUT /api/v1/learning/resources/{id}/selection", s.selectLearningResource)
 	return s.recover(s.logging(s.cors(s.authorize(mux))))
 }
 
@@ -213,6 +227,64 @@ func (s *Server) testModelConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "模型连接成功"})
+}
+
+func (s *Server) listSkills(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.skills.Public())
+}
+
+func (s *Server) listKnowledgeBases(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"bases": s.knowledge.Bases()})
+}
+
+func (s *Server) searchKnowledge(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.knowledge.Search(r.PathValue("id"), r.URL.Query().Get("query"), limit)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) putKnowledge(w http.ResponseWriter, r *http.Request) {
+	var input knowledge.PutInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, err := s.knowledge.Put(r.PathValue("id"), input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+
+func (s *Server) listLearningResources(w http.ResponseWriter, r *http.Request) {
+	selectedOnly, _ := strconv.ParseBool(r.URL.Query().Get("selectedOnly"))
+	writeJSON(w, http.StatusOK, s.learning.List(r.URL.Query().Get("domainSkillId"), r.URL.Query().Get("kind"), selectedOnly))
+}
+
+func (s *Server) refreshLearningResources(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := contextWithTimeout(r, 20*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, s.learning.Refresh(ctx))
+}
+
+func (s *Server) selectLearningResource(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Selected bool `json:"selected"`
+	}
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.learning.SetSelected(r.PathValue("id"), input.Selected); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": r.PathValue("id"), "selected": input.Selected})
 }
 
 func (s *Server) authorize(next http.Handler) http.Handler {

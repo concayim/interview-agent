@@ -13,7 +13,9 @@ import (
 
 	"interview-agent/internal/agent"
 	"interview-agent/internal/domain"
+	"interview-agent/internal/knowledge"
 	"interview-agent/internal/questions"
+	"interview-agent/internal/skills"
 )
 
 var (
@@ -22,11 +24,14 @@ var (
 )
 
 type StartInput struct {
-	CandidateName string `json:"candidateName"`
-	ResumeID      string `json:"resumeId"`
-	Language      string `json:"language"`
-	Difficulty    string `json:"difficulty"`
-	QuestionCount int    `json:"questionCount"`
+	CandidateName      string `json:"candidateName"`
+	ResumeID           string `json:"resumeId"`
+	Language           string `json:"language,omitempty"`
+	DomainSkillID      string `json:"domainSkillId"`
+	InterviewerSkillID string `json:"interviewerSkillId"`
+	IncludeFoundation  bool   `json:"includeFoundation"`
+	Difficulty         string `json:"difficulty"`
+	QuestionCount      int    `json:"questionCount"`
 }
 
 type AnswerInput struct {
@@ -35,15 +40,22 @@ type AnswerInput struct {
 }
 
 type SessionView struct {
-	ID              string                 `json:"id"`
-	CandidateName   string                 `json:"candidateName"`
-	Language        string                 `json:"language"`
-	Difficulty      string                 `json:"difficulty"`
-	Status          string                 `json:"status"`
-	Current         int                    `json:"current"`
-	Total           int                    `json:"total"`
-	CurrentQuestion *domain.PublicQuestion `json:"currentQuestion,omitempty"`
-	StartedAt       time.Time              `json:"startedAt"`
+	ID                 string                 `json:"id"`
+	CandidateName      string                 `json:"candidateName"`
+	Language           string                 `json:"language"`
+	Difficulty         string                 `json:"difficulty"`
+	Industry           string                 `json:"industry"`
+	DomainSkillID      string                 `json:"domainSkillId"`
+	DomainSkillName    string                 `json:"domainSkillName"`
+	InterviewerSkillID string                 `json:"interviewerSkillId"`
+	InterviewerName    string                 `json:"interviewerName"`
+	InterviewerOpening string                 `json:"interviewerOpening"`
+	IncludeFoundation  bool                   `json:"includeFoundation"`
+	Status             string                 `json:"status"`
+	Current            int                    `json:"current"`
+	Total              int                    `json:"total"`
+	CurrentQuestion    *domain.PublicQuestion `json:"currentQuestion,omitempty"`
+	StartedAt          time.Time              `json:"startedAt"`
 }
 
 type AnswerResult struct {
@@ -60,10 +72,26 @@ type Service struct {
 	sessions  map[string]*domain.Session
 	resumes   map[string]domain.Resume
 	evaluator agent.Evaluator
+	catalog   *skills.Catalog
+	knowledge *knowledge.Store
 }
 
-func NewService(evaluator agent.Evaluator) *Service {
-	return &Service{sessions: make(map[string]*domain.Session), resumes: make(map[string]domain.Resume), evaluator: evaluator}
+type Option func(*Service)
+
+func WithCatalog(catalog *skills.Catalog) Option {
+	return func(service *Service) { service.catalog = catalog }
+}
+func WithKnowledge(store *knowledge.Store) Option {
+	return func(service *Service) { service.knowledge = store }
+}
+
+func NewService(evaluator agent.Evaluator, options ...Option) *Service {
+	catalog, _ := skills.Load()
+	service := &Service{sessions: make(map[string]*domain.Session), resumes: make(map[string]domain.Resume), evaluator: evaluator, catalog: catalog}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) AddResume(resume domain.Resume) domain.Resume {
@@ -78,6 +106,8 @@ func (s *Service) AddResume(resume domain.Resume) domain.Resume {
 func (s *Service) Start(input StartInput) (SessionView, error) {
 	input.CandidateName = strings.TrimSpace(input.CandidateName)
 	input.Language = strings.ToLower(strings.TrimSpace(input.Language))
+	input.DomainSkillID = strings.TrimSpace(input.DomainSkillID)
+	input.InterviewerSkillID = strings.TrimSpace(input.InterviewerSkillID)
 	input.Difficulty = strings.ToLower(strings.TrimSpace(input.Difficulty))
 	if input.CandidateName == "" {
 		input.CandidateName = "候选人"
@@ -85,6 +115,28 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 	if input.Difficulty == "" {
 		input.Difficulty = "mixed"
 	}
+	if s.catalog == nil {
+		return SessionView{}, fmt.Errorf("Skill 目录不可用")
+	}
+	var domainSkill skills.Skill
+	var ok bool
+	if input.DomainSkillID != "" {
+		domainSkill, ok = s.catalog.Domain(input.DomainSkillID)
+	} else {
+		domainSkill, ok = s.catalog.DomainByLanguage(input.Language)
+	}
+	if !ok || domainSkill.Language == "foundation" {
+		return SessionView{}, fmt.Errorf("请选择有效的行业/语言 Skill")
+	}
+	interviewerSkillID := input.InterviewerSkillID
+	if interviewerSkillID == "" {
+		interviewerSkillID = "echo-coach"
+	}
+	interviewerSkill, ok := s.catalog.Interviewer(interviewerSkillID)
+	if !ok {
+		return SessionView{}, fmt.Errorf("请选择有效的面试官 Skill")
+	}
+	input.Language = domainSkill.Language
 	var keywords []string
 	s.mu.RLock()
 	if input.ResumeID != "" {
@@ -96,11 +148,16 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 		}
 	}
 	s.mu.RUnlock()
-	selected, err := questions.Select(input.Language, input.Difficulty, input.QuestionCount, keywords)
+	selected, err := questions.SelectWithFoundation(input.Language, input.Difficulty, input.QuestionCount, keywords, input.IncludeFoundation)
 	if err != nil {
 		return SessionView{}, err
 	}
-	session := &domain.Session{ID: newID("session"), CandidateName: input.CandidateName, ResumeID: input.ResumeID, Language: input.Language, Difficulty: input.Difficulty, Status: "active", Questions: selected, StartedAt: time.Now()}
+	if s.knowledge != nil {
+		if err := s.knowledge.RecordIssued(selected); err != nil {
+			return SessionView{}, fmt.Errorf("记录出题 QA 失败: %w", err)
+		}
+	}
+	session := &domain.Session{ID: newID("session"), CandidateName: input.CandidateName, ResumeID: input.ResumeID, Language: input.Language, Difficulty: input.Difficulty, Industry: domainSkill.Industry, DomainSkillID: domainSkill.ID, DomainSkillName: domainSkill.Name, InterviewerSkillID: interviewerSkill.ID, InterviewerName: interviewerSkill.Name, InterviewerOpening: interviewerSkill.OpeningLine, InterviewerPrompt: interviewerSkill.Prompt, EvaluationFocus: interviewerSkill.EvaluationFocus, FeedbackTone: interviewerSkill.FeedbackTone, IncludeFoundation: input.IncludeFoundation, Status: "active", Questions: selected, StartedAt: time.Now()}
 	s.mu.Lock()
 	s.sessions[session.ID] = session
 	s.mu.Unlock()
@@ -145,9 +202,9 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 	question := session.Questions[session.Current]
 	s.mu.RUnlock()
 
-	evaluation, err := s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: question, CandidateAnswer: input.Answer})
+	evaluation, err := s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: question, CandidateAnswer: input.Answer, InterviewerName: session.InterviewerName, InterviewerPrompt: session.InterviewerPrompt, EvaluationFocus: session.EvaluationFocus, FeedbackTone: session.FeedbackTone})
 	if err != nil {
-		evaluation = localEvaluate(question, input.Answer, err)
+		evaluation = localEvaluate(question, input.Answer, err, session.InterviewerSkillID)
 	}
 
 	s.mu.Lock()
@@ -194,7 +251,7 @@ func (s *Service) Report(id string) (domain.Report, error) {
 }
 
 func view(session *domain.Session) SessionView {
-	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Status: session.Status, Current: session.Current, Total: len(session.Questions), StartedAt: session.StartedAt}
+	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Industry: session.Industry, DomainSkillID: session.DomainSkillID, DomainSkillName: session.DomainSkillName, InterviewerSkillID: session.InterviewerSkillID, InterviewerName: session.InterviewerName, InterviewerOpening: session.InterviewerOpening, IncludeFoundation: session.IncludeFoundation, Status: session.Status, Current: session.Current, Total: len(session.Questions), StartedAt: session.StartedAt}
 	if session.Status == "active" && session.Current < len(session.Questions) {
 		q := session.Questions[session.Current].Public()
 		result.CurrentQuestion = &q
@@ -202,7 +259,7 @@ func view(session *domain.Session) SessionView {
 	return result
 }
 
-func localEvaluate(question domain.Question, answer string, modelErr error) domain.Evaluation {
+func localEvaluate(question domain.Question, answer string, modelErr error, interviewerSkillID string) domain.Evaluation {
 	lower := strings.ToLower(answer)
 	hits := 0
 	matched := make([]string, 0)
@@ -240,7 +297,16 @@ func localEvaluate(question domain.Question, answer string, modelErr error) doma
 	}
 	improvements := []string{"建议结合标准答案补全技术细节，并给出工程场景或例子"}
 	if len(missing) > 0 {
-		improvements = []string{"还可补充：" + strings.Join(missing[:min(3, len(missing))], "、")}
+		prefix := "还可补充："
+		switch interviewerSkillID {
+		case "vera-challenger":
+			prefix = "关键缺失，必须补充："
+		case "atlas-architect":
+			prefix = "请补齐约束与边界："
+		case "socrates-guide":
+			prefix = "继续追问自己这些概念如何关联："
+		}
+		improvements = []string{prefix + strings.Join(missing[:min(3, len(missing))], "、")}
 	}
 	summary := fmt.Sprintf("本地规则识别到 %d/%d 个关键点。", hits, len(question.KeyPoints))
 	if modelErr != nil && !errors.Is(modelErr, agent.ErrNotConfigured) {
@@ -265,7 +331,7 @@ func buildReport(session *domain.Session) domain.Report {
 	if len(session.Answers) > 0 {
 		score = total / len(session.Answers)
 	}
-	return domain.Report{SessionID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Score: score, Answered: len(session.Answers), Duration: int(completed.Sub(session.StartedAt).Seconds()), Highlights: topUnique(highlights, 3), FocusAreas: topUnique(focus, 3), Answers: append([]domain.AnswerRecord(nil), session.Answers...), StartedAt: session.StartedAt, CompletedAt: completed}
+	return domain.Report{SessionID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, DomainSkillName: session.DomainSkillName, InterviewerName: session.InterviewerName, Score: score, Answered: len(session.Answers), Duration: int(completed.Sub(session.StartedAt).Seconds()), Highlights: topUnique(highlights, 3), FocusAreas: topUnique(focus, 3), Answers: append([]domain.AnswerRecord(nil), session.Answers...), StartedAt: session.StartedAt, CompletedAt: completed}
 }
 
 func topUnique(values []string, limit int) []string {

@@ -1,0 +1,15 @@
+{
+  "id": "computer-python",
+  "kind": "domain",
+  "name": "Python 工程师",
+  "shortLabel": "Py",
+  "description": "语言机制、异步编程、API 服务与数据工程实践。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "backend",
+  "language": "python",
+  "accent": "#e8d875",
+  "knowledgeBaseId": "computer-python",
+  "prompt": "围绕 Python 语言语义、GIL、asyncio、服务性能和数据处理出题。",
+  "topics": ["Python", "GIL", "asyncio", "性能优化", "数据工程"]
+}

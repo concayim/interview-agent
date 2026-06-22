@@ -62,6 +62,27 @@ func TestLocalFallbackWhenModelUnavailable(t *testing.T) {
 	}
 }
 
+func TestSkillSelectionAndFoundationMix(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	session, err := service.Start(StartInput{CandidateName: "小顾", DomainSkillID: "computer-java", InterviewerSkillID: "vera-challenger", IncludeFoundation: true, Difficulty: "mixed", QuestionCount: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.DomainSkillName != "Java 工程师" || session.InterviewerName != "Vera · 压力挑战官" {
+		t.Fatalf("skills not applied: %#v", session)
+	}
+	stored := service.sessions[session.ID]
+	foundationCount := 0
+	for _, question := range stored.Questions {
+		if question.Language == "foundation" {
+			foundationCount++
+		}
+	}
+	if foundationCount != 1 {
+		t.Fatalf("expected one foundation question, got %d", foundationCount)
+	}
+}
+
 type failingEvaluator struct{}
 
 func (failingEvaluator) Evaluate(context.Context, agent.EvaluationInput) (domain.Evaluation, error) {

@@ -38,9 +38,58 @@ var bank = []domain.Question{
 	{ID: "cpp-06", Language: "cpp", Difficulty: "hard", Prompt: "线上 C++ 服务出现偶发 use-after-free，你会如何定位和修复？", StandardAnswer: "优先在可复现环境启用 AddressSanitizer，保留符号并收集完整栈；并发相关问题配合 ThreadSanitizer，但通常分开运行。审计所有权与跨线程生命周期，减少裸 owning pointer，使用 RAII 和合适智能指针；注意回调捕获 this、容器迭代器失效和异步任务。修复后添加压力/竞态测试并持续在 CI 跑 sanitizer。", KeyPoints: []string{"addresssanitizer/asan", "threadsanitizer/tsan", "符号/symbol", "所有权/ownership", "this", "迭代器/iterator", "ci"}, Tags: []string{"C++", "内存安全", "调试"}},
 }
 
+var foundationBank = []domain.Question{
+	{ID: "foundation-01", Language: "foundation", Difficulty: "easy", Prompt: "进程和线程的核心区别是什么？一次线程切换通常需要保存哪些状态？", StandardAnswer: "进程是资源分配与隔离的基本单位，拥有独立虚拟地址空间等资源；线程是进程内的执行单元，共享进程资源但拥有自己的栈、寄存器和调度状态。线程切换通常保存和恢复程序计数器、寄存器、栈指针及调度上下文；跨进程切换还可能涉及地址空间和页表相关开销。", KeyPoints: []string{"资源隔离/process isolation", "共享地址空间/shared memory", "栈/stack", "寄存器/register", "调度上下文/context switch"}, Tags: []string{"操作系统", "进程", "线程"}},
+	{ID: "foundation-02", Language: "foundation", Difficulty: "easy", Prompt: "TCP 为什么需要三次握手，而不是两次？", StandardAnswer: "三次握手让双方确认彼此的发送和接收能力，并同步初始序列号。仅两次无法让服务端确认客户端已经收到服务端的序列号与确认，旧的延迟连接请求也更容易造成半开或错误建连。第三次 ACK 完成双向状态确认。", KeyPoints: []string{"双向/bidirectional", "序列号/sequence number", "ack", "旧连接/delayed request", "状态确认/state"}, Tags: []string{"计算机网络", "TCP", "基础"}},
+	{ID: "foundation-03", Language: "foundation", Difficulty: "medium", Prompt: "数据库索引为什么常用 B+ 树？它相对哈希索引和二叉树有什么优势？", StandardAnswer: "B+ 树分支多、树高低，节点大小适合页式存储，能减少磁盘或缓存页访问；数据集中在叶子并通过链表连接，适合范围查询和顺序扫描。哈希索引适合等值但不擅长范围与排序，普通二叉树分支少、树高更高且局部性较差。", KeyPoints: []string{"树高低/height", "页/page", "叶子链表/leaf", "范围查询/range", "哈希等值/hash equality"}, Tags: []string{"数据库", "B+树", "索引"}},
+	{ID: "foundation-04", Language: "foundation", Difficulty: "medium", Prompt: "什么是缓存穿透、击穿和雪崩？分别如何治理？", StandardAnswer: "穿透是查询不存在的数据绕过缓存，可用参数校验、空值缓存或布隆过滤器；击穿是热点键失效瞬间大量回源，可用互斥重建、逻辑过期或预热；雪崩是大量键同时失效或缓存整体不可用，可打散过期时间、多级缓存、限流降级并提高缓存集群可用性。", KeyPoints: []string{"穿透/penetration", "布隆过滤器/bloom", "击穿/hot key", "互斥/mutex", "雪崩/avalanche", "过期打散/jitter"}, Tags: []string{"缓存", "Redis", "高并发"}},
+	{ID: "foundation-05", Language: "foundation", Difficulty: "hard", Prompt: "在分布式系统中，如何理解一致性、可用性和分区容错之间的取舍？", StandardAnswer: "网络分区发生时，系统必须在强一致性与持续可用之间做选择，这就是 CAP 的关键语境，而不是日常无分区时只能三选二。CP 系统可能拒绝或延迟部分请求以保持一致，AP 系统继续服务但允许临时不一致并通过冲突解决最终收敛。实际设计还需结合一致性级别、业务不变量、延迟和故障模型。", KeyPoints: []string{"网络分区/partition", "一致性/consistency", "可用性/availability", "cp", "ap", "业务不变量/invariant"}, Tags: []string{"分布式系统", "CAP", "架构设计"}},
+	{ID: "foundation-06", Language: "foundation", Difficulty: "hard", Prompt: "设计一个限流器时，令牌桶和漏桶有什么差异？分布式部署还需考虑什么？", StandardAnswer: "令牌桶按速率补充令牌，允许在桶容量范围内突发；漏桶以较稳定速率流出，更强调平滑。分布式部署需明确全局还是单实例配额，处理时钟、原子扣减、热点、网络失败和配置动态下发；可用 Redis/Lua 或专用限流服务，但要设计失败时放行还是拒绝以及本地兜底。", KeyPoints: []string{"令牌桶/token bucket", "突发/burst", "漏桶/leaky bucket", "平滑/smooth", "原子/atomic", "失败策略/failure"}, Tags: []string{"算法", "限流", "分布式系统"}},
+}
+
 func Languages() []string { return []string{"golang", "java", "python", "cpp"} }
 
+func All() []domain.Question {
+	result := make([]domain.Question, 0, len(bank)+len(foundationBank))
+	result = append(result, bank...)
+	result = append(result, foundationBank...)
+	return result
+}
+
 func Select(language, difficulty string, count int, resumeKeywords []string) ([]domain.Question, error) {
+	return selectFrom(bank, language, difficulty, count, resumeKeywords)
+}
+
+func SelectWithFoundation(language, difficulty string, count int, resumeKeywords []string, includeFoundation bool) ([]domain.Question, error) {
+	if !includeFoundation {
+		return Select(language, difficulty, count, resumeKeywords)
+	}
+	if count < 1 {
+		count = 5
+	}
+	foundationCount := 1
+	if count >= 6 {
+		foundationCount = 2
+	}
+	languageCount := count - foundationCount
+	languageQuestions, err := selectFrom(bank, language, difficulty, languageCount, resumeKeywords)
+	if err != nil {
+		return nil, err
+	}
+	foundationQuestions, err := selectFrom(foundationBank, "foundation", difficulty, foundationCount, resumeKeywords)
+	if err != nil {
+		return languageQuestions, nil
+	}
+	result := make([]domain.Question, 0, len(languageQuestions)+len(foundationQuestions))
+	result = append(result, languageQuestions...)
+	insertAt := min(2, len(result))
+	result = append(result, make([]domain.Question, len(foundationQuestions))...)
+	copy(result[insertAt+len(foundationQuestions):], result[insertAt:len(result)-len(foundationQuestions)])
+	copy(result[insertAt:], foundationQuestions)
+	return result, nil
+}
+
+func selectFrom(source []domain.Question, language, difficulty string, count int, resumeKeywords []string) ([]domain.Question, error) {
 	if count < 1 {
 		count = 5
 	}
@@ -48,7 +97,7 @@ func Select(language, difficulty string, count int, resumeKeywords []string) ([]
 		count = 10
 	}
 	candidates := make([]domain.Question, 0)
-	for _, q := range bank {
+	for _, q := range source {
 		if q.Language == language && (difficulty == "mixed" || q.Difficulty == difficulty) {
 			candidates = append(candidates, q)
 		}

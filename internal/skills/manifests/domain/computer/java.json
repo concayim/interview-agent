@@ -1,0 +1,15 @@
+{
+  "id": "computer-java",
+  "kind": "domain",
+  "name": "Java 工程师",
+  "shortLabel": "Java",
+  "description": "JVM、并发、Spring 与分布式服务设计。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "backend",
+  "language": "java",
+  "accent": "#ffb46e",
+  "knowledgeBaseId": "computer-java",
+  "prompt": "围绕 Java 语言、JVM、并发、Spring 事务和分布式工程出题。",
+  "topics": ["Java", "JVM", "Spring Boot", "并发", "分布式系统"]
+}

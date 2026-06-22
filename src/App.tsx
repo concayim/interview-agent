@@ -3,6 +3,9 @@ import type { CSSProperties, Dispatch, SetStateAction } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
+  Bookmark,
+  BookmarkCheck,
   Bot,
   BrainCircuit,
   Check,
@@ -13,25 +16,29 @@ import {
   Code2,
   FileCheck2,
   FileText,
+  Globe2,
   Gauge,
   Lightbulb,
   LoaderCircle,
   MessageSquareText,
+  Newspaper,
+  PlayCircle,
   RefreshCw,
   Send,
   Settings2,
   ShieldCheck,
   Sparkles,
   Target,
+  LibraryBig,
   UploadCloud,
   UserRound,
   X,
   Zap,
 } from 'lucide-react'
 import { api } from './api'
-import type { Difficulty, Evaluation, Language, ModelConfig, Question, Report, Resume, Session } from './types'
+import type { Difficulty, Evaluation, KnowledgeBase, Language, LearningResource, ModelConfig, QAItem, Question, Report, Resume, Session, SkillCatalog } from './types'
 
-type Screen = 'setup' | 'interview' | 'review'
+type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
 type Turn = { question: Question; answer: string; evaluation: Evaluation }
 type Toast = { type: 'success' | 'error'; message: string }
 
@@ -57,10 +64,11 @@ function App() {
   const [report, setReport] = useState<Report>()
   const [turns, setTurns] = useState<Turn[]>([])
   const [modelConfig, setModelConfig] = useState<ModelConfig>({ baseUrl: '', model: '', enabled: false, hasApiKey: false })
+  const [catalog, setCatalog] = useState<SkillCatalog>()
   const [toast, setToast] = useState<Toast>()
 
   useEffect(() => {
-    api.getModelConfig().then(setModelConfig).catch((error) => setToast({ type: 'error', message: error.message }))
+    Promise.all([api.getModelConfig(), api.skills()]).then(([config, skills]) => { setModelConfig(config); setCatalog(skills) }).catch((error) => setToast({ type: 'error', message: error.message }))
   }, [])
   useEffect(() => {
     if (!toast) return
@@ -92,13 +100,15 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar screen={screen} modelReady={modelConfig.enabled && modelConfig.hasApiKey} onHome={restart} onSettings={() => setSettingsOpen(true)} />
+      <Sidebar screen={screen} modelReady={modelConfig.enabled && modelConfig.hasApiKey} onHome={restart} onLearning={() => setScreen('learning')} onKnowledge={() => setScreen('knowledge')} onSettings={() => setSettingsOpen(true)} />
       <main className="app-main">
-        {screen === 'setup' && <Setup resume={resume} onResume={setResume} onStart={start} modelReady={modelConfig.enabled && modelConfig.hasApiKey} notify={setToast} />}
+        {screen === 'setup' && <Setup catalog={catalog} resume={resume} onResume={setResume} onStart={start} modelReady={modelConfig.enabled && modelConfig.hasApiKey} notify={setToast} />}
         {screen === 'interview' && session && (
           <InterviewScreen session={session} turns={turns} setTurns={setTurns} setSession={setSession} onFinish={finish} onBack={restart} notify={setToast} />
         )}
         {screen === 'review' && report && <ReviewScreen report={report} onRestart={restart} />}
+        {screen === 'learning' && <LearningPage catalog={catalog} notify={setToast} />}
+        {screen === 'knowledge' && <KnowledgePage notify={setToast} />}
       </main>
       <SettingsDrawer open={settingsOpen} value={modelConfig} onClose={() => setSettingsOpen(false)} onSaved={setModelConfig} notify={setToast} />
       {toast && <div className={`toast toast-${toast.type}`}>{toast.type === 'success' ? <Check size={18} /> : <CircleAlert size={18} />}{toast.message}</div>}
@@ -106,7 +116,7 @@ function App() {
   )
 }
 
-function Sidebar({ screen, modelReady, onHome, onSettings }: { screen: Screen; modelReady: boolean; onHome: () => void; onSettings: () => void }) {
+function Sidebar({ screen, modelReady, onHome, onLearning, onKnowledge, onSettings }: { screen: Screen; modelReady: boolean; onHome: () => void; onLearning: () => void; onKnowledge: () => void; onSettings: () => void }) {
   return (
     <aside className="sidebar">
       <button className="brand" onClick={onHome} aria-label="返回首页">
@@ -121,6 +131,10 @@ function Sidebar({ screen, modelReady, onHome, onSettings }: { screen: Screen; m
         <div className={`nav-step ${screen === 'review' ? 'active' : ''}`}><span>03</span><div><strong>复盘</strong><small>答案与建议</small></div></div>
       </nav>
       <div className="sidebar-spacer" />
+      <nav className="explore-nav" aria-label="学习与知识">
+        <button className={screen === 'learning' ? 'active' : ''} onClick={onLearning}><BookOpen size={17} /><span><strong>学习中心</strong><small>权威文章与视频</small></span></button>
+        <button className={screen === 'knowledge' ? 'active' : ''} onClick={onKnowledge}><LibraryBig size={17} /><span><strong>知识库</strong><small>分库 QA 检索</small></span></button>
+      </nav>
       <div className={`model-pill ${modelReady ? 'online' : ''}`}><span className="status-dot" /><div><strong>{modelReady ? 'AI 增强已开启' : '本地模式'}</strong><small>{modelReady ? 'Eino 模型在线' : '规则评分可用'}</small></div></div>
       <button className="sidebar-button" onClick={onSettings}><Settings2 size={17} />模型设置</button>
       <div className="privacy-note"><ShieldCheck size={15} /><span>简历仅在本机解析</span></div>
@@ -128,9 +142,12 @@ function Sidebar({ screen, modelReady, onHome, onSettings }: { screen: Screen; m
   )
 }
 
-function Setup({ resume, onResume, onStart, modelReady, notify }: { resume?: Resume; onResume: (value: Resume) => void; onStart: (value: Session) => void; modelReady: boolean; notify: (value: Toast) => void }) {
+function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { catalog?: SkillCatalog; resume?: Resume; onResume: (value: Resume) => void; onStart: (value: Session) => void; modelReady: boolean; notify: (value: Toast) => void }) {
   const [candidateName, setCandidateName] = useState('')
-  const [language, setLanguage] = useState<Language>('golang')
+  const [industry, setIndustry] = useState('computer')
+  const [domainSkillId, setDomainSkillId] = useState('computer-golang')
+  const [interviewerSkillId, setInterviewerSkillId] = useState('echo-coach')
+  const [includeFoundation, setIncludeFoundation] = useState(true)
   const [difficulty, setDifficulty] = useState<Difficulty>('mixed')
   const [questionCount, setQuestionCount] = useState(5)
   const [uploading, setUploading] = useState(false)
@@ -155,10 +172,12 @@ function Setup({ resume, onResume, onStart, modelReady, notify }: { resume?: Res
 
   const start = async () => {
     setStarting(true)
-    try { onStart(await api.startInterview({ candidateName, resumeId: resume?.id, language, difficulty, questionCount })) }
+    try { onStart(await api.startInterview({ candidateName, resumeId: resume?.id, domainSkillId, interviewerSkillId, includeFoundation, difficulty, questionCount })) }
     catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '面试创建失败' }) }
     finally { setStarting(false) }
   }
+
+  const domainSkills = (catalog?.domains ?? []).filter((skill) => skill.industry === industry && skill.language !== 'foundation')
 
   return (
     <div className="setup-page page-enter">
@@ -186,12 +205,18 @@ function Setup({ resume, onResume, onStart, modelReady, notify }: { resume?: Res
         </section>
 
         <section className="panel direction-panel">
-          <div className="section-heading"><span className="heading-icon violet"><Code2 size={19} /></span><div><h2>选择技术方向</h2><p>每套题都有人工编写的参考答案与关键点</p></div></div>
-          <div className="language-grid">{languageOptions.map((option) => (
-            <button key={option.value} className={`language-card ${language === option.value ? 'selected' : ''}`} onClick={() => setLanguage(option.value)} style={{ '--language-color': option.color } as CSSProperties}>
-              <span className="language-badge">{option.short}</span><span><strong>{option.label}</strong><small>{option.caption}</small></span>{language === option.value && <Check className="language-check" size={15} />}
+          <div className="section-heading"><span className="heading-icon violet"><Code2 size={19} /></span><div><h2>选择行业 / 领域 Skill</h2><p>每个 Skill 绑定独立知识库，后续可直接扩展新行业</p></div></div>
+          <div className="industry-tabs">{(catalog?.industries ?? [{ id: 'computer', name: '计算机' }]).map((option) => <button key={option.id} className={industry === option.id ? 'selected' : ''} onClick={() => setIndustry(option.id)}>{option.name}</button>)}<span>更多行业 Skill 敬请期待</span></div>
+          <div className="language-grid">{domainSkills.map((option) => (
+            <button key={option.id} className={`language-card ${domainSkillId === option.id ? 'selected' : ''}`} onClick={() => setDomainSkillId(option.id)} style={{ '--language-color': option.accent } as CSSProperties}>
+              <span className="language-badge">{option.shortLabel}</span><span><strong>{option.name}</strong><small>{option.topics?.slice(0, 3).join(' · ')}</small></span>{domainSkillId === option.id && <Check className="language-check" size={15} />}
             </button>
           ))}</div>
+        </section>
+
+        <section className="panel interviewer-panel">
+          <div className="section-heading"><span className="heading-icon mint"><Bot size={19} /></span><div><h2>选择面试官风格 Skill</h2><p>同一道题，不同面试官会用不同的评价重点和反馈语气</p></div></div>
+          <div className="interviewer-grid">{(catalog?.interviewers ?? []).map((skill) => <button key={skill.id} className={interviewerSkillId === skill.id ? 'selected' : ''} onClick={() => setInterviewerSkillId(skill.id)} style={{ '--skill-color': skill.accent } as CSSProperties}><span className="interviewer-avatar"><Bot size={18} /></span><strong>{skill.name}</strong><p>{skill.description}</p><small>{skill.evaluationFocus?.join(' · ')}</small>{interviewerSkillId === skill.id && <Check className="skill-check" size={15} />}</button>)}</div>
         </section>
 
         <section className="panel preferences-panel">
@@ -200,8 +225,9 @@ function Setup({ resume, onResume, onStart, modelReady, notify }: { resume?: Res
           <div className="name-input"><UserRound size={17} /><input value={candidateName} maxLength={30} onChange={(event) => setCandidateName(event.target.value)} placeholder="候选人（可不填）" /></div>
           <label className="field-label">面试难度</label>
           <div className="difficulty-row">{difficultyOptions.map((option) => <button key={option.value} className={difficulty === option.value ? 'selected' : ''} onClick={() => setDifficulty(option.value)}><strong>{option.label}</strong><small>{option.caption}</small></button>)}</div>
+          <label className="foundation-toggle"><input type="checkbox" checked={includeFoundation} onChange={(event) => setIncludeFoundation(event.target.checked)} /><span><LibraryBig size={16} /><strong>混入计算机基础公共库</strong><small>每场加入 1–2 道操作系统、网络、数据库或分布式基础题</small></span><i /></label>
           {difficulty === 'mixed' && <div className="count-row"><span><MessageSquareText size={16} />题目数量</span><div>{[3, 5, 6].map((count) => <button key={count} className={questionCount === count ? 'selected' : ''} onClick={() => setQuestionCount(count)}>{count} 题</button>)}</div></div>}
-          <button className="primary-action" onClick={start} disabled={starting}>{starting ? <LoaderCircle className="spin" size={19} /> : <Sparkles size={18} />}开始模拟面试<ArrowRight size={18} /></button>
+          <button className="primary-action" onClick={start} disabled={starting || !catalog}>{starting ? <LoaderCircle className="spin" size={19} /> : <Sparkles size={18} />}开始模拟面试<ArrowRight size={18} /></button>
           <div className="start-hint"><span><Clock3 size={14} />约 {questionCount * 3}–{questionCount * 5} 分钟</span><span><Bot size={14} />{modelReady ? 'AI 深度点评' : '本地关键点评分'}</span></div>
         </section>
 
@@ -248,18 +274,18 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     <div className="interview-page page-enter">
       <header className="interview-topbar">
         <button className="icon-button" onClick={onBack} title="退出本场面试"><ArrowLeft size={19} /></button>
-        <div className="interview-title"><span className="live-dot" /><div><strong>{languageLabel(session.language)} 技术面试</strong><small>{session.candidateName} · {difficultyLabel(session.difficulty)}</small></div></div>
+        <div className="interview-title"><span className="live-dot" /><div><strong>{session.domainSkillName || languageLabel(session.language)}</strong><small>{session.candidateName} · {difficultyLabel(session.difficulty)} · {session.interviewerName}</small></div></div>
         <div className="progress-block"><div><span>进度</span><strong>{Math.min(session.current + 1, session.total)} / {session.total}</strong></div><div className="progress-track"><span style={{ width: `${Math.min(100, (session.current / session.total) * 100)}%` }} /></div></div>
         <div className="timer"><Clock3 size={16} />{formatTime(elapsed)}</div>
       </header>
       <div className="interview-layout">
         <section className="conversation">
-          <div className="conversation-intro"><span><Bot size={21} /></span><div><strong>面试官 Echo</strong><p>你好，{session.candidateName}。我们从 {languageLabel(session.language)} 开始。别急着给“标准句式”，我更想听你的理解和取舍。</p></div></div>
-          {turns.map((turn, index) => <TurnCard key={turn.question.id} turn={turn} index={index + 1} />)}
+          <div className="conversation-intro"><span><Bot size={21} /></span><div><strong>{session.interviewerName}</strong><p>你好，{session.candidateName}。{session.interviewerOpening}</p></div></div>
+          {turns.map((turn, index) => <TurnCard key={turn.question.id} turn={turn} index={index + 1} interviewerName={session.interviewerName} />)}
           {session.currentQuestion && (
             <div className="question-message">
               <div className="message-avatar"><Bot size={18} /></div>
-              <div className="message-content"><div className="message-meta"><strong>Echo</strong><span>第 {session.current + 1} 题</span></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
+              <div className="message-content"><div className="message-meta"><strong>{session.interviewerName}</strong><span>第 {session.current + 1} 题</span></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
             </div>
           )}
           {readyReport && <div className="completion-card"><span><Sparkles size={26} /></span><h2>这场面试完成了</h2><p>你认真回答了 {readyReport.answered} 道题。标准答案、逐题评分和下一步练习建议都已经整理好。</p><button className="primary-action compact" onClick={() => onFinish(readyReport)}>查看我的复盘<ArrowRight size={18} /></button></div>}
@@ -277,11 +303,11 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
   )
 }
 
-function TurnCard({ turn, index }: { turn: Turn; index: number }) {
+function TurnCard({ turn, index, interviewerName }: { turn: Turn; index: number; interviewerName: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="turn-block">
-      <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className="message-content"><div className="message-meta"><strong>Echo</strong><span>第 {index} 题</span></div><p>{turn.question.prompt}</p></div></div>
+      <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className="message-content"><div className="message-meta"><strong>{interviewerName}</strong><span>第 {index} 题</span></div><p>{turn.question.prompt}</p></div></div>
       <div className="answer-message"><div className="answer-bubble"><p>{turn.answer}</p></div><div className="user-avatar"><UserRound size={17} /></div></div>
       <button className={`inline-evaluation ${open ? 'open' : ''}`} onClick={() => setOpen(!open)}><span className={`score-dot score-${scoreBand(turn.evaluation.score)}`}>{turn.evaluation.score}</span><span><strong>{turn.evaluation.summary}</strong><small>{turn.evaluation.source === 'llm' ? 'Eino AI 点评' : '本地关键点评分'} · 点击{open ? '收起' : '展开'}</small></span><ChevronDown size={18} />
         {open && <div className="evaluation-details"><div><Check size={15} /><p>{turn.evaluation.strengths.join('；')}</p></div><div><Zap size={15} /><p>{turn.evaluation.improvements.join('；')}</p></div></div>}
@@ -294,7 +320,7 @@ function ReviewScreen({ report, onRestart }: { report: Report; onRestart: () => 
   const [openIndex, setOpenIndex] = useState(0)
   return (
     <div className="review-page page-enter">
-      <header className="review-hero"><div><span className="eyebrow"><FileCheck2 size={14} /> 本场面试复盘</span><h1>{report.candidateName}，你已经走完了这一轮。</h1><p>{languageLabel(report.language)} · {difficultyLabel(report.difficulty)} · {report.answered} 道题 · {formatTime(report.durationSeconds)}</p></div><button className="secondary-action" onClick={onRestart}><RefreshCw size={17} />再练一场</button></header>
+      <header className="review-hero"><div><span className="eyebrow"><FileCheck2 size={14} /> 本场面试复盘</span><h1>{report.candidateName}，你已经走完了这一轮。</h1><p>{report.domainSkillName || languageLabel(report.language)} · {report.interviewerName} · {difficultyLabel(report.difficulty)} · {report.answered} 道题 · {formatTime(report.durationSeconds)}</p></div><button className="secondary-action" onClick={onRestart}><RefreshCw size={17} />再练一场</button></header>
       <div className="score-overview">
         <div className="score-ring" style={{ '--score': report.score } as CSSProperties}><div><strong>{report.score}</strong><span>综合得分</span></div></div>
         <div className="score-copy"><span className={`performance-pill ${scoreBand(report.score)}`}>{performanceText(report.score)}</span><h2>{report.score >= 80 ? '表达清晰，继续保持工程细节。' : report.score >= 60 ? '基本盘不错，再补齐关键边界。' : '已经找到薄弱点，这正是练习的价值。'}</h2><p>得分由逐题关键点或 Eino 模型评价汇总。建议先看“值得保留”，再逐题对照标准答案。</p></div>
@@ -312,6 +338,91 @@ function ReviewScreen({ report, onRestart }: { report: Report; onRestart: () => 
     </div>
   )
 }
+
+function LearningPage({ catalog, notify }: { catalog?: SkillCatalog; notify: (value: Toast) => void }) {
+  const [resources, setResources] = useState<LearningResource[]>([])
+  const [domain, setDomain] = useState('all')
+  const [kind, setKind] = useState('all')
+  const [selectedOnly, setSelectedOnly] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshedAt, setRefreshedAt] = useState<string>()
+  const load = async () => {
+    setLoading(true)
+    try { const result = await api.learningResources(domain, kind, selectedOnly); setResources(result.resources); setRefreshedAt(result.refreshedAt) }
+    catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '学习资源加载失败' }) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [domain, kind, selectedOnly])
+  const refresh = async () => {
+    setRefreshing(true)
+    try {
+      const result = await api.refreshLearning()
+      setRefreshedAt(result.refreshedAt)
+      if (result.warnings?.length) notify({ type: 'error', message: `部分来源暂不可用，其余已更新（${result.warnings.length} 个）` })
+      else notify({ type: 'success', message: '已从权威来源抓取最新文章' })
+      await load()
+    } catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '抓取失败' }) }
+    finally { setRefreshing(false) }
+  }
+  const toggle = async (resource: LearningResource) => {
+    const selected = !resource.selected
+    setResources((previous) => previous.map((item) => item.id === resource.id ? { ...item, selected } : item))
+    try { await api.selectLearning(resource.id, selected); notify({ type: 'success', message: selected ? '已加入我的学习清单' : '已移出学习清单' }) }
+    catch (error) { setResources((previous) => previous.map((item) => item.id === resource.id ? resource : item)); notify({ type: 'error', message: error instanceof Error ? error.message : '操作失败' }) }
+  }
+  const domainSkills = catalog?.domains ?? []
+  return <div className="learning-page page-enter">
+    <header className="library-hero"><div><span className="eyebrow"><BookOpen size={14} /> Learning Studio</span><h1>从权威内容里，<em>继续生长。</em></h1><p>官方文档、技术博客、课程和视频集中在这里。只抓取标题与摘要，阅读始终回到原始权威网站。</p></div><button className="secondary-action" onClick={refresh} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}抓取最新内容</button></header>
+    <div className="learning-toolbar"><div className="filter-group"><button className={domain === 'all' ? 'selected' : ''} onClick={() => setDomain('all')}>全部领域</button>{domainSkills.map((skill) => <button key={skill.id} className={domain === skill.id ? 'selected' : ''} onClick={() => setDomain(skill.id)}>{skill.shortLabel}</button>)}</div><div className="filter-group kind-filter">{['all', 'article', 'video', 'course', 'docs'].map((value) => <button key={value} className={kind === value ? 'selected' : ''} onClick={() => setKind(value)}>{resourceKindLabel(value)}</button>)}</div><label className="selected-filter"><input type="checkbox" checked={selectedOnly} onChange={(event) => setSelectedOnly(event.target.checked)} /><BookmarkCheck size={15} />只看学习清单</label></div>
+    <div className="resource-meta"><span><Globe2 size={14} />{resources.length} 个权威资源</span>{refreshedAt && <span>上次抓取 {new Date(refreshedAt).toLocaleString('zh-CN')}</span>}</div>
+    {loading ? <div className="empty-state"><LoaderCircle className="spin" size={26} /><p>正在整理学习内容…</p></div> : resources.length === 0 ? <div className="empty-state"><BookOpen size={28} /><h3>这里还没有内容</h3><p>调整筛选条件，或点击“抓取最新内容”。</p></div> : <div className="resource-grid">{resources.map((resource) => <article key={resource.id} className={`resource-card ${resource.selected ? 'selected' : ''}`}><div className="resource-card-top"><span className={`resource-kind kind-${resource.kind}`}>{resourceKindIcon(resource.kind)}{resourceKindLabel(resource.kind)}</span>{resource.live && <span className="live-source"><span />实时抓取</span>}</div><h2>{resource.title}</h2><p>{resource.summary || '来自权威来源的最新内容，点击前往原站学习。'}</p><div className="resource-source"><strong>{resource.authority}</strong><small>{resourceDate(resource)}</small></div><footer><button className={`bookmark-button ${resource.selected ? 'active' : ''}`} onClick={() => toggle(resource)}>{resource.selected ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}{resource.selected ? '已选择' : '加入学习'}</button><a href={resource.url} target="_blank" rel="noreferrer">去学习<ArrowRight size={15} /></a></footer></article>)}</div>}
+  </div>
+}
+
+function KnowledgePage({ notify }: { notify: (value: Toast) => void }) {
+  const [bases, setBases] = useState<KnowledgeBase[]>([])
+  const [baseId, setBaseId] = useState('')
+  const [items, setItems] = useState<QAItem[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [openItem, setOpenItem] = useState<string>()
+  const [adding, setAdding] = useState(false)
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState('')
+  const loadBases = async () => {
+    try { const result = await api.knowledgeBases(); setBases(result.bases); if (!baseId && result.bases.length) setBaseId(result.bases[0].id) }
+    catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '知识库加载失败' }) }
+  }
+  const search = async (targetBase = baseId, targetQuery = query) => {
+    if (!targetBase) return
+    setLoading(true)
+    try { const result = await api.searchKnowledge(targetBase, targetQuery); setItems(result.items); setOpenItem(undefined) }
+    catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '检索失败' }) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { loadBases() }, [])
+  useEffect(() => { if (baseId) search(baseId, '') }, [baseId])
+  const addQA = async () => {
+    try { await api.addKnowledge(baseId, { question, answer, difficulty: 'medium' }); setQuestion(''); setAnswer(''); setAdding(false); await Promise.all([search(), loadBases()]); notify({ type: 'success', message: 'QA 已写入当前知识库' }) }
+    catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '写入失败' }) }
+  }
+  const currentBase = bases.find((base) => base.id === baseId)
+  return <div className="knowledge-page page-enter">
+    <header className="library-hero"><div><span className="eyebrow"><LibraryBig size={14} /> Knowledge Base</span><h1>每次出题，都让知识库<em>更好检索。</em></h1><p>语言库彼此独立，计算机基础作为公共库。每次面试实际出过的题都会累计出题次数并沉淀为 QA。</p></div><button className="secondary-action" onClick={() => setAdding(!adding)}>{adding ? <X size={17} /> : <Sparkles size={17} />}{adding ? '取消' : '新增 QA'}</button></header>
+    <div className="knowledge-layout"><aside className="base-list"><span className="aside-label">知识库</span>{bases.map((base) => <button key={base.id} className={baseId === base.id ? 'selected' : ''} onClick={() => { setBaseId(base.id); setQuery('') }} style={{ '--base-color': base.accent } as CSSProperties}><span>{base.language === 'foundation' ? 'CS' : languageOptions.find((option) => option.value === base.language)?.short ?? base.language}</span><div><strong>{base.name}</strong><small>{base.itemCount} 个 QA · 已出题 {base.issuedCount} 次</small></div></button>)}</aside><section className="knowledge-main">
+      {currentBase && <div className="base-summary"><span className="heading-icon violet"><LibraryBig size={19} /></span><div><h2>{currentBase.name}</h2><p>{currentBase.description}</p><div>{currentBase.topics.map((topic) => <span key={topic}>{topic}</span>)}</div></div></div>}
+      {adding && <div className="qa-form"><label>问题<input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="输入希望沉淀的问题" /></label><label>标准答案<textarea value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="输入可复盘、可检索的标准答案" /></label><button className="primary-action compact" disabled={!question.trim() || !answer.trim()} onClick={addQA}><Check size={16} />写入知识库</button></div>}
+      <div className="knowledge-search"><div><SearchIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') search() }} placeholder="检索题目、答案或标签…" /></div><button onClick={() => search()}>检索</button></div>
+      {loading ? <div className="empty-state compact"><LoaderCircle className="spin" size={23} /></div> : <div className="qa-list">{items.map((item) => <article key={item.id} className={openItem === item.id ? 'open' : ''}><button onClick={() => setOpenItem(openItem === item.id ? undefined : item.id)}><span className="qa-source">{item.source === 'manual' ? '手动' : item.source === 'interview' ? '面试沉淀' : '内置'}</span><div><h3>{item.question}</h3><small>{item.tags.join(' · ')}{item.issuedCount > 0 && ` · 已出题 ${item.issuedCount} 次`}</small></div><ChevronDown size={18} /></button>{openItem === item.id && <div className="qa-answer"><span>标准答案</span><p>{item.answer}</p><div>{item.keyPoints.map((point) => <em key={point}>{point.split('/')[0]}</em>)}</div></div>}</article>)}</div>}
+    </section></div>
+  </div>
+}
+
+function SearchIcon() { return <Target size={16} /> }
+function resourceKindLabel(kind: string) { return ({ all: '全部类型', article: '文章', video: '视频', course: '课程', docs: '文档' } as Record<string, string>)[kind] ?? kind }
+function resourceKindIcon(kind: string) { if (kind === 'video') return <PlayCircle size={13} />; if (kind === 'article') return <Newspaper size={13} />; return <BookOpen size={13} /> }
+function resourceDate(resource: LearningResource) { const date = resource.publishedAt ? new Date(resource.publishedAt) : undefined; return date && date.getFullYear() > 1900 ? date.toLocaleDateString('zh-CN') : resource.source }
 
 function SettingsDrawer({ open, value, onClose, onSaved, notify }: { open: boolean; value: ModelConfig; onClose: () => void; onSaved: (value: ModelConfig) => void; notify: (value: Toast) => void }) {
   const [apiKey, setApiKey] = useState('')

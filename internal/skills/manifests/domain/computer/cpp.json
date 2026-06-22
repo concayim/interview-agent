@@ -1,0 +1,15 @@
+{
+  "id": "computer-cpp",
+  "kind": "domain",
+  "name": "C++ 工程师",
+  "shortLabel": "C++",
+  "description": "内存与所有权、现代 C++、并发和系统性能。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "systems",
+  "language": "cpp",
+  "accent": "#ac9cff",
+  "knowledgeBaseId": "computer-cpp",
+  "prompt": "围绕现代 C++、RAII、所有权、并发原语、调试和系统性能出题。",
+  "topics": ["C++", "RAII", "智能指针", "并发", "性能优化"]
+}

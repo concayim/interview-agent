@@ -1,6 +1,6 @@
 # Interview Copilot API
 
-版本：`v1`
+版本：`v1`（应用 `v0.2.0`）
 
 本地地址：`http://127.0.0.1:46831/api/v1`
 
@@ -52,6 +52,43 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 可能状态：`400` 文件过大或缺少文件；`415` 格式不支持；`422` 文件损坏或没有可读文本。
 
+## Skill 目录
+
+### `GET /skills`
+
+返回动态面试官 Skill、领域 Skill 和行业目录。Skill 的私有提示词不会返回给前端。
+
+```json
+{
+  "interviewers": [
+    {
+      "id": "vera-challenger",
+      "kind": "interviewer",
+      "name": "Vera · 压力挑战官",
+      "shortLabel": "Vera",
+      "description": "节奏直接、标准严格…",
+      "accent": "#ff8194",
+      "openingLine": "我会比较直接…",
+      "evaluationFocus": ["事实准确性", "边界条件", "抗压表达", "反例意识"],
+      "feedbackTone": "直接、严格、不刻薄"
+    }
+  ],
+  "domains": [
+    {
+      "id": "computer-golang",
+      "kind": "domain",
+      "name": "Golang 工程师",
+      "industry": "computer",
+      "industryName": "计算机",
+      "language": "golang",
+      "knowledgeBaseId": "computer-golang",
+      "topics": ["Go", "GMP", "并发"]
+    }
+  ],
+  "industries": [{ "id": "computer", "name": "计算机" }]
+}
+```
+
 ## 面试
 
 ### `POST /interviews`
@@ -62,7 +99,9 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 {
   "candidateName": "小林",
   "resumeId": "resume-a2f04c...",
-  "language": "golang",
+  "domainSkillId": "computer-golang",
+  "interviewerSkillId": "atlas-architect",
+  "includeFoundation": true,
   "difficulty": "mixed",
   "questionCount": 5
 }
@@ -70,7 +109,9 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 枚举：
 
-- `language`: `golang | java | python | cpp`
+- `domainSkillId`: 当前为 `computer-golang | computer-java | computer-python | computer-cpp`
+- `interviewerSkillId`: `echo-coach | atlas-architect | vera-challenger | socrates-guide`
+- `includeFoundation`: 是否混入计算机基础公共库
 - `difficulty`: `easy | medium | hard | mixed`
 - `questionCount`: `1..10`，若超过当前筛选结果则返回实际可用数量
 
@@ -82,6 +123,13 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "candidateName": "小林",
   "language": "golang",
   "difficulty": "mixed",
+  "industry": "computer",
+  "domainSkillId": "computer-golang",
+  "domainSkillName": "Golang 工程师",
+  "interviewerSkillId": "atlas-architect",
+  "interviewerName": "Atlas · 架构面试官",
+  "interviewerOpening": "我会追问设计背后的约束和取舍…",
+  "includeFoundation": true,
   "status": "active",
   "current": 0,
   "total": 5,
@@ -213,6 +261,108 @@ API Key 永远不会返回。
 ```
 
 未配置或上游失败返回 `502`。
+
+## 知识库
+
+### `GET /knowledge/bases`
+
+返回公共库与各语言库，以及 QA 数和累计出题次数。
+
+```json
+{
+  "bases": [
+    {
+      "id": "computer-foundation",
+      "name": "计算机基础公共库",
+      "language": "foundation",
+      "topics": ["数据结构", "操作系统", "计算机网络"],
+      "itemCount": 6,
+      "issuedCount": 3
+    }
+  ]
+}
+```
+
+### `GET /knowledge/bases/{id}/qa?query=TCP&limit=30`
+
+按问题、答案和标签检索指定知识库。`query` 为空时按出题次数与更新时间返回。
+
+```json
+{
+  "items": [
+    {
+      "id": "qa-foundation-02",
+      "baseId": "computer-foundation",
+      "question": "TCP 为什么需要三次握手，而不是两次？",
+      "answer": "三次握手让双方确认…",
+      "keyPoints": ["双向/bidirectional", "序列号/sequence number"],
+      "tags": ["计算机网络", "TCP", "基础"],
+      "difficulty": "easy",
+      "source": "built-in",
+      "issuedCount": 1
+    }
+  ]
+}
+```
+
+### `POST /knowledge/bases/{id}/qa`
+
+手动新增或按问题内容更新 QA：
+
+```json
+{
+  "question": "什么是时间复杂度？",
+  "answer": "描述输入规模增长时算法耗时的渐近趋势。",
+  "keyPoints": ["渐近", "输入规模"],
+  "tags": ["算法"],
+  "difficulty": "easy"
+}
+```
+
+成功返回 `201` 和完整 QA。创建面试时，服务会自动对实际选中的 QA 执行 upsert 并增加 `issuedCount`。
+
+## 学习中心
+
+### `GET /learning/resources`
+
+查询参数：
+
+- `domainSkillId`: `all` 或领域 Skill ID；
+- `kind`: `all | article | video | course | docs`；
+- `selectedOnly`: `true | false`。
+
+```json
+{
+  "resources": [
+    {
+      "id": "docs-go-tour",
+      "title": "A Tour of Go",
+      "url": "https://go.dev/tour/",
+      "kind": "docs",
+      "source": "Go Documentation",
+      "authority": "Go Team",
+      "summary": "Go 官方交互式语言导览…",
+      "domainSkillIds": ["computer-golang"],
+      "selected": true,
+      "live": false
+    }
+  ],
+  "refreshedAt": "2026-06-23T00:35:42+08:00",
+  "warnings": []
+}
+```
+
+### `POST /learning/refresh`
+
+并发抓取五个权威 Feed 的标题、链接、短摘要与发布时间。单源失败写入 `warnings`，其余结果仍返回 `200`。请求超时 20 秒。
+
+### `PUT /learning/resources/{id}/selection`
+
+```json
+{ "selected": true }
+```
+
+将资源加入或移出本地学习清单。响应：`{ "id": "...", "selected": true }`。
 
 ## 状态码
 

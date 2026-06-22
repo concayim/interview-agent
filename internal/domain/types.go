@@ -51,30 +51,42 @@ type AnswerRecord struct {
 }
 
 type Session struct {
-	ID            string         `json:"id"`
-	CandidateName string         `json:"candidateName"`
-	ResumeID      string         `json:"resumeId,omitempty"`
-	Language      string         `json:"language"`
-	Difficulty    string         `json:"difficulty"`
-	Status        string         `json:"status"`
-	Questions     []Question     `json:"-"`
-	Current       int            `json:"current"`
-	Answers       []AnswerRecord `json:"answers"`
-	StartedAt     time.Time      `json:"startedAt"`
-	CompletedAt   *time.Time     `json:"completedAt,omitempty"`
+	ID                 string         `json:"id"`
+	CandidateName      string         `json:"candidateName"`
+	ResumeID           string         `json:"resumeId,omitempty"`
+	Language           string         `json:"language"`
+	Difficulty         string         `json:"difficulty"`
+	Industry           string         `json:"industry"`
+	DomainSkillID      string         `json:"domainSkillId"`
+	DomainSkillName    string         `json:"domainSkillName"`
+	InterviewerSkillID string         `json:"interviewerSkillId"`
+	InterviewerName    string         `json:"interviewerName"`
+	InterviewerOpening string         `json:"interviewerOpening"`
+	InterviewerPrompt  string         `json:"-"`
+	EvaluationFocus    []string       `json:"-"`
+	FeedbackTone       string         `json:"-"`
+	IncludeFoundation  bool           `json:"includeFoundation"`
+	Status             string         `json:"status"`
+	Questions          []Question     `json:"-"`
+	Current            int            `json:"current"`
+	Answers            []AnswerRecord `json:"answers"`
+	StartedAt          time.Time      `json:"startedAt"`
+	CompletedAt        *time.Time     `json:"completedAt,omitempty"`
 }
 
 type Report struct {
-	SessionID     string         `json:"sessionId"`
-	CandidateName string         `json:"candidateName"`
-	Language      string         `json:"language"`
-	Difficulty    string         `json:"difficulty"`
-	Score         int            `json:"score"`
-	Answered      int            `json:"answered"`
-	Duration      int            `json:"durationSeconds"`
-	Highlights    []string       `json:"highlights"`
-	FocusAreas    []string       `json:"focusAreas"`
-	Answers       []AnswerRecord `json:"answers"`
-	StartedAt     time.Time      `json:"startedAt"`
-	CompletedAt   time.Time      `json:"completedAt"`
+	SessionID       string         `json:"sessionId"`
+	CandidateName   string         `json:"candidateName"`
+	Language        string         `json:"language"`
+	Difficulty      string         `json:"difficulty"`
+	DomainSkillName string         `json:"domainSkillName"`
+	InterviewerName string         `json:"interviewerName"`
+	Score           int            `json:"score"`
+	Answered        int            `json:"answered"`
+	Duration        int            `json:"durationSeconds"`
+	Highlights      []string       `json:"highlights"`
+	FocusAreas      []string       `json:"focusAreas"`
+	Answers         []AnswerRecord `json:"answers"`
+	StartedAt       time.Time      `json:"startedAt"`
+	CompletedAt     time.Time      `json:"completedAt"`
 }

@@ -1,0 +1,15 @@
+{
+  "id": "computer-foundation",
+  "kind": "domain",
+  "name": "计算机基础公共库",
+  "shortLabel": "CS",
+  "description": "数据结构、操作系统、网络、数据库与分布式系统公共基础。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "foundation",
+  "language": "foundation",
+  "accent": "#84a9ff",
+  "knowledgeBaseId": "computer-foundation",
+  "prompt": "从计算机通用基础出题，重视原理、复杂度、边界条件和工程联系。",
+  "topics": ["数据结构", "操作系统", "计算机网络", "数据库", "分布式系统"]
+}

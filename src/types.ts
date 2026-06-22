@@ -29,6 +29,13 @@ export type Session = {
   candidateName: string
   language: Language
   difficulty: Difficulty
+  industry: string
+  domainSkillId: string
+  domainSkillName: string
+  interviewerSkillId: string
+  interviewerName: string
+  interviewerOpening: string
+  includeFoundation: boolean
   status: 'active' | 'completed'
   current: number
   total: number
@@ -48,6 +55,8 @@ export type Report = {
   candidateName: string
   language: Language
   difficulty: Difficulty
+  domainSkillName: string
+  interviewerName: string
   score: number
   answered: number
   durationSeconds: number
@@ -74,5 +83,78 @@ export type ModelConfig = {
   hasApiKey: boolean
 }
 
-export type Language = 'golang' | 'java' | 'python' | 'cpp'
+export type Skill = {
+  id: string
+  kind: 'interviewer' | 'domain'
+  name: string
+  shortLabel: string
+  description: string
+  accent: string
+  avatar?: string
+  openingLine?: string
+  evaluationFocus?: string[]
+  feedbackTone?: string
+  industry?: string
+  industryName?: string
+  domain?: string
+  language?: string
+  knowledgeBaseId?: string
+  topics?: string[]
+}
+
+export type SkillCatalog = {
+  interviewers: Skill[]
+  domains: Skill[]
+  industries: { id: string; name: string }[]
+}
+
+export type KnowledgeBase = {
+  id: string
+  name: string
+  description: string
+  industry: string
+  industryName: string
+  language: string
+  accent: string
+  topics: string[]
+  itemCount: number
+  issuedCount: number
+}
+
+export type QAItem = {
+  id: string
+  baseId: string
+  question: string
+  answer: string
+  keyPoints: string[]
+  tags: string[]
+  language: string
+  difficulty: string
+  source: 'built-in' | 'interview' | 'manual'
+  issuedCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type LearningResource = {
+  id: string
+  title: string
+  url: string
+  kind: 'article' | 'video' | 'course' | 'docs'
+  source: string
+  authority: string
+  summary: string
+  domainSkillIds: string[]
+  publishedAt?: string
+  selected: boolean
+  live: boolean
+}
+
+export type LearningResult = {
+  resources: LearningResource[]
+  refreshedAt?: string
+  warnings?: string[]
+}
+
+export type Language = string
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'mixed'

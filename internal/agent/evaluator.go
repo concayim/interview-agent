@@ -19,8 +19,12 @@ import (
 var ErrNotConfigured = errors.New("大模型尚未配置")
 
 type EvaluationInput struct {
-	Question        domain.Question
-	CandidateAnswer string
+	Question          domain.Question
+	CandidateAnswer   string
+	InterviewerName   string
+	InterviewerPrompt string
+	EvaluationFocus   []string
+	FeedbackTone      string
 }
 
 type Evaluator interface {
@@ -49,7 +53,9 @@ func (e *EinoEvaluator) Evaluate(ctx context.Context, input EvaluationInput) (do
 	if err != nil {
 		return domain.Evaluation{}, fmt.Errorf("创建 Eino ChatModel 失败: %w", err)
 	}
-	prompt := fmt.Sprintf(`你是一名严格但友善的资深技术面试官。根据题目、标准答案和关键点评价候选人的回答。
+	prompt := fmt.Sprintf(`你是面试官 Skill「%s」。风格指令：%s
+评价重点：%s。反馈语气：%s。
+根据题目、标准答案和关键点评价候选人的回答。
 只返回合法 JSON，不要使用 Markdown。结构必须是：
 {"score":0到100的整数,"summary":"两句以内的中文总结","strengths":["具体优点"],"improvements":["可执行的改进建议"]}
 不要因为措辞与标准答案不同而扣分，重点判断技术事实、推理和工程意识。回答为空时得 0 分。
@@ -57,7 +63,7 @@ func (e *EinoEvaluator) Evaluate(ctx context.Context, input EvaluationInput) (do
 题目：%s
 标准答案：%s
 关键点：%s
-候选人回答：%s`, input.Question.Prompt, input.Question.StandardAnswer, strings.Join(input.Question.KeyPoints, "、"), input.CandidateAnswer)
+候选人回答：%s`, input.InterviewerName, input.InterviewerPrompt, strings.Join(input.EvaluationFocus, "、"), input.FeedbackTone, input.Question.Prompt, input.Question.StandardAnswer, strings.Join(input.Question.KeyPoints, "、"), input.CandidateAnswer)
 	response, err := model.Generate(ctx, []*schema.Message{
 		{Role: schema.System, Content: "你是 Interview Copilot 的答案评估 Agent，必须输出可解析的 JSON。"},
 		{Role: schema.User, Content: prompt},

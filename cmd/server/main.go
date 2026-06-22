@@ -17,6 +17,10 @@ import (
 	"interview-agent/internal/api"
 	"interview-agent/internal/config"
 	"interview-agent/internal/interview"
+	"interview-agent/internal/knowledge"
+	"interview-agent/internal/learning"
+	"interview-agent/internal/questions"
+	"interview-agent/internal/skills"
 )
 
 func main() {
@@ -34,8 +38,27 @@ func main() {
 		os.Exit(1)
 	}
 	evaluator := agent.NewEinoEvaluator(configStore)
-	service := interview.NewService(evaluator)
-	handler := api.New(logger, dataDir, os.Getenv("INTERVIEW_AGENT_TOKEN"), configStore, service, evaluator).Handler()
+	skillCatalog, err := skills.Load()
+	if err != nil {
+		logger.Error("load skill catalog", "error", err)
+		os.Exit(1)
+	}
+	knowledgeStore, err := knowledge.NewStore(dataDir, skillCatalog.DomainSkills())
+	if err != nil {
+		logger.Error("load knowledge bases", "error", err)
+		os.Exit(1)
+	}
+	if err := knowledgeStore.SeedQuestions(questions.All()); err != nil {
+		logger.Error("seed knowledge bases", "error", err)
+		os.Exit(1)
+	}
+	learningService, err := learning.NewService(dataDir)
+	if err != nil {
+		logger.Error("load learning service", "error", err)
+		os.Exit(1)
+	}
+	service := interview.NewService(evaluator, interview.WithCatalog(skillCatalog), interview.WithKnowledge(knowledgeStore))
+	handler := api.New(logger, dataDir, os.Getenv("INTERVIEW_AGENT_TOKEN"), configStore, service, evaluator, skillCatalog, knowledgeStore, learningService).Handler()
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
 		logger.Error("listen", "error", err)

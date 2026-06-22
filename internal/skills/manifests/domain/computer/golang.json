@@ -1,0 +1,15 @@
+{
+  "id": "computer-golang",
+  "kind": "domain",
+  "name": "Golang 工程师",
+  "shortLabel": "Go",
+  "description": "并发模型、Runtime、服务治理与生产工程实践。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "backend",
+  "language": "golang",
+  "accent": "#6bd7e8",
+  "knowledgeBaseId": "computer-golang",
+  "prompt": "围绕 Go 语言语义、GMP、并发控制、性能诊断和后端工程实践出题。",
+  "topics": ["Go", "GMP", "并发", "pprof", "微服务"]
+}

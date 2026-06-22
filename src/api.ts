@@ -1,4 +1,4 @@
-import type { AnswerResult, Difficulty, Language, ModelConfig, Report, Resume, Session } from './types'
+import type { AnswerResult, Difficulty, KnowledgeBase, LearningResult, ModelConfig, QAItem, Report, Resume, Session, SkillCatalog } from './types'
 
 const baseUrl = window.interviewAgent?.apiBaseUrl ?? 'http://127.0.0.1:46831/api/v1'
 const token = window.interviewAgent?.apiToken ?? ''
@@ -20,7 +20,8 @@ export const api = {
     body.append('file', file)
     return request<Resume>('/resumes', { method: 'POST', body })
   },
-  startInterview: (input: { candidateName: string; resumeId?: string; language: Language; difficulty: Difficulty; questionCount: number }) =>
+  skills: () => request<SkillCatalog>('/skills'),
+  startInterview: (input: { candidateName: string; resumeId?: string; domainSkillId: string; interviewerSkillId: string; includeFoundation: boolean; difficulty: Difficulty; questionCount: number }) =>
     request<Session>('/interviews', { method: 'POST', body: JSON.stringify(input) }),
   answer: (sessionId: string, answer: string, elapsedSeconds: number) =>
     request<AnswerResult>(`/interviews/${sessionId}/answers`, { method: 'POST', body: JSON.stringify({ answer, elapsedSeconds }) }),
@@ -29,4 +30,10 @@ export const api = {
   saveModelConfig: (input: { apiKey: string; baseUrl: string; model: string; enabled: boolean; clearApiKey?: boolean }) =>
     request<ModelConfig>('/config/model', { method: 'PUT', body: JSON.stringify(input) }),
   testModelConfig: () => request<{ ok: boolean; message: string }>('/config/model/test', { method: 'POST', body: '{}' }),
+  knowledgeBases: () => request<{ bases: KnowledgeBase[] }>('/knowledge/bases'),
+  searchKnowledge: (baseId: string, query = '', limit = 30) => request<{ items: QAItem[] }>(`/knowledge/bases/${encodeURIComponent(baseId)}/qa?query=${encodeURIComponent(query)}&limit=${limit}`),
+  addKnowledge: (baseId: string, input: { question: string; answer: string; keyPoints?: string[]; tags?: string[]; difficulty?: string }) => request<QAItem>(`/knowledge/bases/${encodeURIComponent(baseId)}/qa`, { method: 'POST', body: JSON.stringify(input) }),
+  learningResources: (domainSkillId = 'all', kind = 'all', selectedOnly = false) => request<LearningResult>(`/learning/resources?domainSkillId=${encodeURIComponent(domainSkillId)}&kind=${encodeURIComponent(kind)}&selectedOnly=${selectedOnly}`),
+  refreshLearning: () => request<LearningResult>('/learning/refresh', { method: 'POST', body: '{}' }),
+  selectLearning: (id: string, selected: boolean) => request<{ id: string; selected: boolean }>(`/learning/resources/${encodeURIComponent(id)}/selection`, { method: 'PUT', body: JSON.stringify({ selected }) }),
 }

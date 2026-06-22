@@ -1,0 +1,21 @@
+# Go
+/interview-agent-server
+/resources/bin/
+*.test
+
+# Node / Electron
+/node_modules/
+/dist/
+/release/
+*.tsbuildinfo
+
+# Local data and secrets
+/.data/
+/.env
+model-config.json
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.log

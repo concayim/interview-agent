@@ -76,7 +76,10 @@ func SelectWithFoundation(language, difficulty string, count int, resumeKeywords
 		return languageCandidates[:min(count, len(languageCandidates))], nil
 	}
 	target := min(count, len(languageCandidates)+len(foundationCandidates))
-	foundationCount := max(1, target/3)
+	foundationCount := 0
+	if target > 1 {
+		foundationCount = max(1, target/3)
+	}
 	if target-foundationCount > len(languageCandidates) {
 		foundationCount = target - len(languageCandidates)
 	}
@@ -105,6 +108,28 @@ func SelectWithFoundation(language, difficulty string, count int, resumeKeywords
 		}
 	}
 	return result, nil
+}
+
+// Rank returns a copy ordered by relevance to resume or introduction keywords.
+// Stable sorting keeps the original difficulty order for equally relevant questions.
+func Rank(selected []domain.Question, keywords []string) []domain.Question {
+	result := append([]domain.Question(nil), selected...)
+	keywordWeights := make(map[string]int, len(keywords))
+	for index, keyword := range keywords {
+		keywordWeights[strings.ToLower(strings.TrimSpace(keyword))] = len(keywords) - index
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return weightedRelevance(result[i], keywordWeights) > weightedRelevance(result[j], keywordWeights)
+	})
+	return result
+}
+
+func weightedRelevance(q domain.Question, weights map[string]int) int {
+	score := 0
+	for _, tag := range q.Tags {
+		score += weights[strings.ToLower(tag)]
+	}
+	return score
 }
 
 func selectFrom(source []domain.Question, language, difficulty string, count int, resumeKeywords []string) ([]domain.Question, error) {

@@ -132,20 +132,22 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "interviewerOpening": "我会追问设计背后的约束和取舍…",
   "includeFoundation": true,
   "status": "active",
+  "phase": "introduction",
   "current": 0,
   "total": 5,
   "followUpRound": 0,
   "followUpTotal": 3,
   "currentQuestion": {
-    "id": "go-01",
-    "promptId": "go-01",
+    "id": "introduction",
+    "promptId": "session-17ac...-introduction",
+    "stage": "introduction",
     "language": "golang",
-    "difficulty": "easy",
-    "prompt": "Go 的 goroutine 和操作系统线程有什么区别？",
-    "tags": ["Go", "高并发", "调度器"],
+    "difficulty": "mixed",
+    "prompt": "小林，正式开始前，请先用 1–2 分钟做个自我介绍……",
+    "tags": ["自我介绍"],
     "followUp": false,
     "round": 0,
-    "followUpTotal": 3
+    "followUpTotal": 0
   },
   "startedAt": "2026-06-22T12:00:00+08:00"
 }
@@ -160,6 +162,49 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 ### `POST /interviews/{id}/answers`
 
 请求：
+
+```json
+{
+  "answer": "我主要负责 Go 后端和 Redis 高并发项目，在团队里承担核心服务设计与稳定性治理。",
+  "elapsedSeconds": 76
+}
+```
+
+首次提交用于完成自我介绍。该阶段不参与技术评分，`current` 保持 `0`；响应会返回按简历与介绍关键词排序后的第一个技术问题：
+
+```json
+{
+  "evaluation": {
+    "score": 0,
+    "summary": "自我介绍已记录，接下来的问题会结合你的简历与刚才提到的经历。",
+    "strengths": ["完成面试开场"],
+    "improvements": [],
+    "source": "local"
+  },
+  "questionCompleted": true,
+  "completed": false,
+  "phase": "technical",
+  "nextQuestion": {
+    "id": "foundation-04",
+    "promptId": "foundation-04",
+    "stage": "technical",
+    "leadIn": "谢谢你的介绍。我看到你的简历里提到了「Redis」，我们就从这段经历展开。",
+    "language": "foundation",
+    "difficulty": "medium",
+    "prompt": "什么是缓存穿透、击穿和雪崩？分别如何治理？",
+    "tags": ["缓存", "Redis", "高并发"],
+    "followUp": false,
+    "round": 0,
+    "followUpTotal": 3
+  },
+  "current": 0,
+  "total": 5,
+  "followUpRound": 0,
+  "followUpTotal": 3
+}
+```
+
+后续使用同一接口提交技术回答：
 
 ```json
 {
@@ -181,9 +226,11 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   },
   "questionCompleted": false,
   "completed": false,
+  "phase": "technical",
   "nextQuestion": {
     "id": "go-01",
     "promptId": "go-01-followup-1",
+    "stage": "follow_up",
     "language": "golang",
     "difficulty": "easy",
     "prompt": "追问 1/3：如果把 goroutine 放进真实系统，你会如何定义约束和容量？",
@@ -199,7 +246,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 }
 ```
 
-完成一个主问题的最后一轮追问时，`questionCompleted=true`，`current` 加一，`nextQuestion` 变为下一主问题。最后一个主问题完成时 `completed=true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
+完成一个主问题的最后一轮追问时，`questionCompleted=true`，`current` 加一，`nextQuestion` 变为下一主问题。最后一个主问题完成时 `completed=true`、`phase=completed`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
 
 ### `GET /interviews/{id}/report`
 
@@ -218,6 +265,11 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "durationSeconds": 1032,
   "highlights": ["覆盖了 goroutine 和 GMP"],
   "focusAreas": ["补充并发取消语义"],
+  "introduction": {
+    "prompt": "小林，正式开始前，请先用 1–2 分钟做个自我介绍……",
+    "answer": "我主要负责 Go 后端和 Redis 高并发项目……",
+    "elapsedSeconds": 76
+  },
   "answers": [
     {
       "question": {

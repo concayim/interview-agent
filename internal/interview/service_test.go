@@ -2,6 +2,7 @@ package interview
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/agent"
@@ -23,6 +24,16 @@ func TestInterviewLifecycleIncludesStandardAnswersInReport(t *testing.T) {
 	if session.CurrentQuestion == nil {
 		t.Fatal("missing first question")
 	}
+	if session.Phase != "introduction" || session.CurrentQuestion.Stage != "introduction" {
+		t.Fatalf("expected introduction first, got %#v", session)
+	}
+	introResult, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我主要做 Python 后端开发，负责过异步服务和性能优化项目。", ElapsedSeconds: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if introResult.NextQuestion == nil || introResult.NextQuestion.Stage != "technical" || introResult.Current != 0 {
+		t.Fatalf("expected first technical question after introduction, got %#v", introResult)
+	}
 	totalTurns := session.Total * (session.FollowUpTotal + 1)
 	for index := 0; index < totalTurns; index++ {
 		result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "这是一个包含技术细节的完整测试回答。", ElapsedSeconds: 12})
@@ -33,11 +44,14 @@ func TestInterviewLifecycleIncludesStandardAnswersInReport(t *testing.T) {
 			t.Fatal("missing next question")
 		}
 		if index == totalTurns-1 {
-			if !result.Completed || result.Report == nil {
+			if !result.Completed || result.Phase != "completed" || result.Report == nil {
 				t.Fatal("expected completed report")
 			}
 			if len(result.Report.Answers) != session.Total {
 				t.Fatalf("expected %d report answers", session.Total)
+			}
+			if result.Report.Introduction == nil || result.Report.Introduction.Answer == "" {
+				t.Fatal("introduction was not included in report")
 			}
 			for _, answer := range result.Report.Answers {
 				if answer.Question.StandardAnswer == "" {
@@ -54,10 +68,35 @@ func TestInterviewLifecycleIncludesStandardAnswersInReport(t *testing.T) {
 	}
 }
 
+func TestIntroductionTransitionsToResumeRelatedQuestion(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	resume := service.AddResume(domain.Resume{FileName: "resume.pdf", Keywords: []string{"Redis", "Go"}})
+	session, err := service.Start(StartInput{CandidateName: "小周", ResumeID: resume.ID, DomainSkillID: "computer-golang", InterviewerSkillID: "echo-coach", IncludeFoundation: true, Difficulty: "mixed", QuestionCount: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我主要负责订单系统，使用 Go 开发微服务，并负责稳定性治理。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NextQuestion == nil || result.NextQuestion.Stage != "technical" {
+		t.Fatalf("expected technical question after introduction: %#v", result)
+	}
+	if !strings.Contains(result.NextQuestion.LeadIn, "简历") || !strings.Contains(result.NextQuestion.LeadIn, "Redis") {
+		t.Fatalf("expected resume-related lead-in, got %q", result.NextQuestion.LeadIn)
+	}
+	if !strings.Contains(result.NextQuestion.Prompt, "缓存") {
+		t.Fatalf("expected resume-ranked Redis question first, got %q", result.NextQuestion.Prompt)
+	}
+}
+
 func TestLocalFallbackWhenModelUnavailable(t *testing.T) {
 	service := NewService(failingEvaluator{})
 	session, err := service.Start(StartInput{Language: "golang", Difficulty: "easy", QuestionCount: 1})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我负责 Go 后端服务，做过高并发系统与性能优化。"}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "goroutine 使用 GMP 调度并复用线程，栈可以动态增长。"})
@@ -105,6 +144,9 @@ func TestFollowUpProgressionUsesStyleRounds(t *testing.T) {
 	}
 	if session.FollowUpTotal != 3 {
 		t.Fatalf("expected 3 Atlas follow-ups, got %d", session.FollowUpTotal)
+	}
+	if _, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我主要负责 Go 微服务架构和稳定性建设。"}); err != nil {
+		t.Fatal(err)
 	}
 	seenPrompts := map[string]bool{}
 	for round := 1; round <= 3; round++ {

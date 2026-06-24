@@ -67,34 +67,77 @@ func SelectWithFoundation(language, difficulty string, count int, resumeKeywords
 	if count < 1 {
 		count = 5
 	}
-	foundationCount := 1
-	if count >= 6 {
-		foundationCount = 2
-	}
-	languageCount := count - foundationCount
-	languageQuestions, err := selectFrom(bank, language, difficulty, languageCount, resumeKeywords)
+	languageCandidates, err := selectFrom(bank, language, difficulty, 20, resumeKeywords)
 	if err != nil {
 		return nil, err
 	}
-	foundationQuestions, err := selectFrom(foundationBank, "foundation", difficulty, foundationCount, resumeKeywords)
+	foundationCandidates, err := selectFrom(foundationBank, "foundation", difficulty, 20, resumeKeywords)
 	if err != nil {
-		return languageQuestions, nil
+		return languageCandidates[:min(count, len(languageCandidates))], nil
 	}
-	result := make([]domain.Question, 0, len(languageQuestions)+len(foundationQuestions))
-	result = append(result, languageQuestions...)
-	insertAt := min(2, len(result))
-	result = append(result, make([]domain.Question, len(foundationQuestions))...)
-	copy(result[insertAt+len(foundationQuestions):], result[insertAt:len(result)-len(foundationQuestions)])
-	copy(result[insertAt:], foundationQuestions)
+	target := min(count, len(languageCandidates)+len(foundationCandidates))
+	foundationCount := 0
+	if target > 1 {
+		foundationCount = max(1, target/3)
+	}
+	if target-foundationCount > len(languageCandidates) {
+		foundationCount = target - len(languageCandidates)
+	}
+	foundationCount = min(foundationCount, len(foundationCandidates))
+	languageCount := min(target-foundationCount, len(languageCandidates))
+	if languageCount+foundationCount < target {
+		foundationCount = min(len(foundationCandidates), target-languageCount)
+	}
+	languageQuestions := languageCandidates[:languageCount]
+	foundationQuestions := foundationCandidates[:foundationCount]
+	result := make([]domain.Question, 0, target)
+	for languageIndex, foundationIndex := 0, 0; len(result) < target; {
+		for added := 0; added < 2 && languageIndex < len(languageQuestions); added++ {
+			result = append(result, languageQuestions[languageIndex])
+			languageIndex++
+		}
+		if foundationIndex < len(foundationQuestions) {
+			result = append(result, foundationQuestions[foundationIndex])
+			foundationIndex++
+		}
+		if languageIndex >= len(languageQuestions) {
+			for foundationIndex < len(foundationQuestions) && len(result) < target {
+				result = append(result, foundationQuestions[foundationIndex])
+				foundationIndex++
+			}
+		}
+	}
 	return result, nil
+}
+
+// Rank returns a copy ordered by relevance to resume or introduction keywords.
+// Stable sorting keeps the original difficulty order for equally relevant questions.
+func Rank(selected []domain.Question, keywords []string) []domain.Question {
+	result := append([]domain.Question(nil), selected...)
+	keywordWeights := make(map[string]int, len(keywords))
+	for index, keyword := range keywords {
+		keywordWeights[strings.ToLower(strings.TrimSpace(keyword))] = len(keywords) - index
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return weightedRelevance(result[i], keywordWeights) > weightedRelevance(result[j], keywordWeights)
+	})
+	return result
+}
+
+func weightedRelevance(q domain.Question, weights map[string]int) int {
+	score := 0
+	for _, tag := range q.Tags {
+		score += weights[strings.ToLower(tag)]
+	}
+	return score
 }
 
 func selectFrom(source []domain.Question, language, difficulty string, count int, resumeKeywords []string) ([]domain.Question, error) {
 	if count < 1 {
 		count = 5
 	}
-	if count > 10 {
-		count = 10
+	if count > 20 {
+		count = 20
 	}
 	candidates := make([]domain.Question, 0)
 	for _, q := range source {

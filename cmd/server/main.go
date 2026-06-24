@@ -64,7 +64,7 @@ func main() {
 		logger.Error("listen", "error", err)
 		os.Exit(1)
 	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 70 * time.Second, WriteTimeout: 70 * time.Second, IdleTimeout: 90 * time.Second}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 90 * time.Second}
 	go func() {
 		logger.Info("Interview Copilot backend ready", "address", listener.Addr(), "dataDir", dataDir)
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {

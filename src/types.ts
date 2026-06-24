@@ -10,10 +10,16 @@ export type Resume = {
 
 export type Question = {
   id: string
+  promptId: string
+  stage: 'introduction' | 'technical' | 'follow_up'
+  leadIn?: string
   language: Language
   difficulty: Difficulty
   prompt: string
   tags: string[]
+  followUp: boolean
+  round: number
+  followUpTotal: number
 }
 
 export type Evaluation = {
@@ -37,8 +43,11 @@ export type Session = {
   interviewerOpening: string
   includeFoundation: boolean
   status: 'active' | 'completed'
+  phase: 'introduction' | 'technical' | 'completed'
   current: number
   total: number
+  followUpRound: number
+  followUpTotal: number
   currentQuestion?: Question
   startedAt: string
 }
@@ -48,6 +57,14 @@ export type AnswerRecord = {
   answer: string
   elapsedSeconds: number
   evaluation: Evaluation
+  followUps: {
+    round: number
+    prompt: string
+    answer: string
+    elapsedSeconds: number
+    evaluation: Evaluation
+  }[]
+  averageScore: number
 }
 
 export type Report = {
@@ -62,6 +79,11 @@ export type Report = {
   durationSeconds: number
   highlights: string[]
   focusAreas: string[]
+  introduction?: {
+    prompt: string
+    answer: string
+    elapsedSeconds: number
+  }
   answers: AnswerRecord[]
   startedAt: string
   completedAt: string
@@ -69,10 +91,14 @@ export type Report = {
 
 export type AnswerResult = {
   evaluation: Evaluation
+  questionCompleted: boolean
   completed: boolean
   nextQuestion?: Question
   current: number
   total: number
+  followUpRound: number
+  followUpTotal: number
+  phase: 'introduction' | 'technical' | 'completed'
   report?: Report
 }
 
@@ -94,6 +120,7 @@ export type Skill = {
   openingLine?: string
   evaluationFocus?: string[]
   feedbackTone?: string
+  followUpRounds?: number
   industry?: string
   industryName?: string
   domain?: string

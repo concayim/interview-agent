@@ -1,7 +1,9 @@
-const { contextBridge } = require('electron')
+const { contextBridge, ipcRenderer } = require('electron')
+
+const bootstrap = ipcRenderer.sendSync('interview-agent:bootstrap')
 
 contextBridge.exposeInMainWorld('interviewAgent', {
-  apiBaseUrl: 'http://127.0.0.1:46831/api/v1',
-  apiToken: process.env.INTERVIEW_AGENT_TOKEN || '',
-  platform: process.platform,
+  apiBaseUrl: bootstrap.apiBaseUrl,
+  apiToken: bootstrap.apiToken,
+  platform: bootstrap.platform,
 })

@@ -13,23 +13,25 @@ import (
 var manifestFS embed.FS
 
 type Skill struct {
-	ID              string   `json:"id"`
-	Kind            string   `json:"kind"`
-	Name            string   `json:"name"`
-	ShortLabel      string   `json:"shortLabel"`
-	Description     string   `json:"description"`
-	Accent          string   `json:"accent"`
-	Avatar          string   `json:"avatar,omitempty"`
-	Prompt          string   `json:"prompt,omitempty"`
-	OpeningLine     string   `json:"openingLine,omitempty"`
-	EvaluationFocus []string `json:"evaluationFocus,omitempty"`
-	FeedbackTone    string   `json:"feedbackTone,omitempty"`
-	Industry        string   `json:"industry,omitempty"`
-	IndustryName    string   `json:"industryName,omitempty"`
-	Domain          string   `json:"domain,omitempty"`
-	Language        string   `json:"language,omitempty"`
-	KnowledgeBaseID string   `json:"knowledgeBaseId,omitempty"`
-	Topics          []string `json:"topics,omitempty"`
+	ID                 string   `json:"id"`
+	Kind               string   `json:"kind"`
+	Name               string   `json:"name"`
+	ShortLabel         string   `json:"shortLabel"`
+	Description        string   `json:"description"`
+	Accent             string   `json:"accent"`
+	Avatar             string   `json:"avatar,omitempty"`
+	Prompt             string   `json:"prompt,omitempty"`
+	IntroductionPrompt string   `json:"introductionPrompt,omitempty"`
+	OpeningLine        string   `json:"openingLine,omitempty"`
+	EvaluationFocus    []string `json:"evaluationFocus,omitempty"`
+	FeedbackTone       string   `json:"feedbackTone,omitempty"`
+	FollowUpRounds     int      `json:"followUpRounds,omitempty"`
+	Industry           string   `json:"industry,omitempty"`
+	IndustryName       string   `json:"industryName,omitempty"`
+	Domain             string   `json:"domain,omitempty"`
+	Language           string   `json:"language,omitempty"`
+	KnowledgeBaseID    string   `json:"knowledgeBaseId,omitempty"`
+	Topics             []string `json:"topics,omitempty"`
 }
 
 type Industry struct {
@@ -130,6 +132,7 @@ func (c *Catalog) Public() PublicCatalog {
 	result := PublicCatalog{Interviewers: append([]Skill(nil), c.interviewers...), Domains: append([]Skill(nil), c.domains...)}
 	for i := range result.Interviewers {
 		result.Interviewers[i].Prompt = ""
+		result.Interviewers[i].IntroductionPrompt = ""
 	}
 	for i := range result.Domains {
 		result.Domains[i].Prompt = ""

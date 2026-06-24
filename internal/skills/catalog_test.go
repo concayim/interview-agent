@@ -20,11 +20,11 @@ func TestLoadCatalog(t *testing.T) {
 		}
 	}
 	vera, ok := catalog.Interviewer("vera-challenger")
-	if !ok || vera.Prompt == "" {
+	if !ok || vera.Prompt == "" || vera.IntroductionPrompt == "" || vera.FollowUpRounds != 3 {
 		t.Fatal("private interviewer prompt was not loaded")
 	}
 	for _, skill := range public.Interviewers {
-		if skill.Prompt != "" {
+		if skill.Prompt != "" || skill.IntroductionPrompt != "" {
 			t.Fatalf("public catalog leaked prompt for %s", skill.ID)
 		}
 	}

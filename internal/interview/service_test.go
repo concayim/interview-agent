@@ -2,6 +2,7 @@ package interview
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/agent"
@@ -23,27 +24,69 @@ func TestInterviewLifecycleIncludesStandardAnswersInReport(t *testing.T) {
 	if session.CurrentQuestion == nil {
 		t.Fatal("missing first question")
 	}
-	for index := 0; index < session.Total; index++ {
+	if session.Phase != "introduction" || session.CurrentQuestion.Stage != "introduction" {
+		t.Fatalf("expected introduction first, got %#v", session)
+	}
+	introResult, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我主要做 Python 后端开发，负责过异步服务和性能优化项目。", ElapsedSeconds: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if introResult.NextQuestion == nil || introResult.NextQuestion.Stage != "technical" || introResult.Current != 0 {
+		t.Fatalf("expected first technical question after introduction, got %#v", introResult)
+	}
+	totalTurns := session.Total * (session.FollowUpTotal + 1)
+	for index := 0; index < totalTurns; index++ {
 		result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "这是一个包含技术细节的完整测试回答。", ElapsedSeconds: 12})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if index < session.Total-1 && result.NextQuestion == nil {
+		if index < totalTurns-1 && result.NextQuestion == nil {
 			t.Fatal("missing next question")
 		}
-		if index == session.Total-1 {
-			if !result.Completed || result.Report == nil {
+		if index == totalTurns-1 {
+			if !result.Completed || result.Phase != "completed" || result.Report == nil {
 				t.Fatal("expected completed report")
 			}
 			if len(result.Report.Answers) != session.Total {
 				t.Fatalf("expected %d report answers", session.Total)
 			}
+			if result.Report.Introduction == nil || result.Report.Introduction.Answer == "" {
+				t.Fatal("introduction was not included in report")
+			}
 			for _, answer := range result.Report.Answers {
 				if answer.Question.StandardAnswer == "" {
 					t.Fatal("standard answer was not included")
 				}
+				if len(answer.FollowUps) != session.FollowUpTotal {
+					t.Fatalf("expected %d follow-ups, got %d", session.FollowUpTotal, len(answer.FollowUps))
+				}
+				if answer.AverageScore != 88 {
+					t.Fatalf("unexpected average score %d", answer.AverageScore)
+				}
 			}
 		}
+	}
+}
+
+func TestIntroductionTransitionsToResumeRelatedQuestion(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	resume := service.AddResume(domain.Resume{FileName: "resume.pdf", Keywords: []string{"Redis", "Go"}})
+	session, err := service.Start(StartInput{CandidateName: "小周", ResumeID: resume.ID, DomainSkillID: "computer-golang", InterviewerSkillID: "echo-coach", IncludeFoundation: true, Difficulty: "mixed", QuestionCount: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我主要负责订单系统，使用 Go 开发微服务，并负责稳定性治理。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NextQuestion == nil || result.NextQuestion.Stage != "technical" {
+		t.Fatalf("expected technical question after introduction: %#v", result)
+	}
+	if !strings.Contains(result.NextQuestion.LeadIn, "简历") || !strings.Contains(result.NextQuestion.LeadIn, "Redis") {
+		t.Fatalf("expected resume-related lead-in, got %q", result.NextQuestion.LeadIn)
+	}
+	if !strings.Contains(result.NextQuestion.Prompt, "缓存") {
+		t.Fatalf("expected resume-ranked Redis question first, got %q", result.NextQuestion.Prompt)
 	}
 }
 
@@ -53,12 +96,22 @@ func TestLocalFallbackWhenModelUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我负责 Go 后端服务，做过高并发系统与性能优化。"}); err != nil {
+		t.Fatal(err)
+	}
 	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "goroutine 使用 GMP 调度并复用线程，栈可以动态增长。"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Evaluation.Source != "local" {
 		t.Fatalf("expected local fallback, got %s", result.Evaluation.Source)
+	}
+	followUpResult, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "线上会通过限流和降级控制风险，并用 p99 指标和压测验证容量边界。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if followUpResult.Evaluation.Source != "local" || followUpResult.Evaluation.Score < 65 {
+		t.Fatalf("expected focused local follow-up evaluation, got %#v", followUpResult.Evaluation)
 	}
 }
 
@@ -80,6 +133,55 @@ func TestSkillSelectionAndFoundationMix(t *testing.T) {
 	}
 	if foundationCount != 1 {
 		t.Fatalf("expected one foundation question, got %d", foundationCount)
+	}
+}
+
+func TestFollowUpProgressionUsesStyleRounds(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	session, err := service.Start(StartInput{DomainSkillID: "computer-golang", InterviewerSkillID: "atlas-architect", Difficulty: "mixed", QuestionCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.FollowUpTotal != 3 {
+		t.Fatalf("expected 3 Atlas follow-ups, got %d", session.FollowUpTotal)
+	}
+	if _, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "我主要负责 Go 微服务架构和稳定性建设。"}); err != nil {
+		t.Fatal(err)
+	}
+	seenPrompts := map[string]bool{}
+	for round := 1; round <= 3; round++ {
+		result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "包含一些关键点的回答。"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.NextQuestion == nil || !result.NextQuestion.FollowUp || result.NextQuestion.Round != round {
+			t.Fatalf("round %d did not produce expected follow-up: %#v", round, result.NextQuestion)
+		}
+		if seenPrompts[result.NextQuestion.Prompt] {
+			t.Fatalf("follow-up repeated at round %d: %s", round, result.NextQuestion.Prompt)
+		}
+		seenPrompts[result.NextQuestion.Prompt] = true
+	}
+	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "最后一轮补充回答。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.QuestionCompleted || !result.Completed {
+		t.Fatalf("main question did not complete after follow-ups: %#v", result)
+	}
+}
+
+func TestCustomMainQuestionCount(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	session, err := service.Start(StartInput{DomainSkillID: "computer-python", InterviewerSkillID: "echo-coach", IncludeFoundation: true, Difficulty: "mixed", QuestionCount: 11})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Total != 11 {
+		t.Fatalf("expected 11 custom main questions, got %d", session.Total)
+	}
+	if _, err := service.Start(StartInput{DomainSkillID: "computer-python", InterviewerSkillID: "echo-coach", Difficulty: "mixed", QuestionCount: 21}); err == nil {
+		t.Fatal("expected question count validation error")
 	}
 }
 

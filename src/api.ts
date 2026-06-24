@@ -1,6 +1,6 @@
 import type { AnswerResult, Difficulty, KnowledgeBase, LearningResult, ModelConfig, QAItem, Report, Resume, Session, SkillCatalog } from './types'
 
-const baseUrl = window.interviewAgent?.apiBaseUrl ?? 'http://127.0.0.1:46831/api/v1'
+const baseUrl = window.interviewAgent?.apiBaseUrl ?? import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:46831/api/v1'
 const token = window.interviewAgent?.apiToken ?? ''
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

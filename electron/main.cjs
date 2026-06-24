@@ -1,23 +1,36 @@
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell } = require('electron')
 const { spawn } = require('node:child_process')
 const { randomBytes } = require('node:crypto')
+const net = require('node:net')
 const path = require('node:path')
 
-const PORT = 46831
 const TOKEN = randomBytes(24).toString('hex')
 let backend
+let port
 
-function backendCommand() {
+function backendCommand(backendPort) {
   if (!app.isPackaged) {
-    return { command: 'go', args: ['run', './cmd/server', '-port', String(PORT)], cwd: path.join(__dirname, '..') }
+    return { command: 'go', args: ['run', './cmd/server', '-port', String(backendPort)], cwd: path.join(__dirname, '..') }
   }
   const binary = process.platform === 'win32' ? 'interview-agent-server.exe' : 'interview-agent-server'
-  return { command: path.join(process.resourcesPath, 'bin', binary), args: ['-port', String(PORT)], cwd: process.resourcesPath }
+  return { command: path.join(process.resourcesPath, 'bin', binary), args: ['-port', String(backendPort)], cwd: process.resourcesPath }
 }
 
-function startBackend() {
-  const target = backendCommand()
-  process.env.INTERVIEW_AGENT_TOKEN = TOKEN
+function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer()
+    probe.unref()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const availablePort = typeof address === 'object' && address ? address.port : 0
+      probe.close((error) => error ? reject(error) : resolve(availablePort))
+    })
+  })
+}
+
+function startBackend(backendPort) {
+  const target = backendCommand(backendPort)
   backend = spawn(target.command, target.args, {
     cwd: target.cwd,
     env: {
@@ -32,11 +45,11 @@ function startBackend() {
   backend.on('exit', (code) => { if (code && !app.isQuitting) console.error(`Backend exited with code ${code}`) })
 }
 
-async function waitForBackend() {
+async function waitForBackend(backendPort) {
   const deadline = Date.now() + 30000
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`http://127.0.0.1:${PORT}/api/v1/health`)
+      const response = await fetch(`http://127.0.0.1:${backendPort}/api/v1/health`)
       if (response.ok) return
     } catch { /* backend is still starting */ }
     await new Promise((resolve) => setTimeout(resolve, 250))
@@ -70,9 +83,17 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  startBackend()
   try {
-    await waitForBackend()
+    port = await findAvailablePort()
+    ipcMain.on('interview-agent:bootstrap', (event) => {
+      event.returnValue = {
+        apiBaseUrl: `http://127.0.0.1:${port}/api/v1`,
+        apiToken: TOKEN,
+        platform: process.platform,
+      }
+    })
+    startBackend(port)
+    await waitForBackend(port)
     createWindow()
   } catch (error) {
     console.error(error)

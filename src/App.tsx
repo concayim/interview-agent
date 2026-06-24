@@ -65,10 +65,21 @@ function App() {
   const [turns, setTurns] = useState<Turn[]>([])
   const [modelConfig, setModelConfig] = useState<ModelConfig>({ baseUrl: '', model: '', enabled: false, hasApiKey: false })
   const [catalog, setCatalog] = useState<SkillCatalog>()
+  const [catalogLoading, setCatalogLoading] = useState(true)
+  const [catalogError, setCatalogError] = useState('')
   const [toast, setToast] = useState<Toast>()
 
+  const loadCatalog = async () => {
+    setCatalogLoading(true)
+    setCatalogError('')
+    try { setCatalog(await api.skills()) }
+    catch (error) { setCatalogError(error instanceof Error ? error.message : 'Skill 目录加载失败') }
+    finally { setCatalogLoading(false) }
+  }
+
   useEffect(() => {
-    Promise.all([api.getModelConfig(), api.skills()]).then(([config, skills]) => { setModelConfig(config); setCatalog(skills) }).catch((error) => setToast({ type: 'error', message: error.message }))
+    void loadCatalog()
+    api.getModelConfig().then(setModelConfig).catch((error) => setToast({ type: 'error', message: `模型配置加载失败：${error.message}` }))
   }, [])
   useEffect(() => {
     if (!toast) return
@@ -102,7 +113,7 @@ function App() {
     <div className="app-shell">
       <Sidebar screen={screen} modelReady={modelConfig.enabled && modelConfig.hasApiKey} onHome={restart} onLearning={() => setScreen('learning')} onKnowledge={() => setScreen('knowledge')} onSettings={() => setSettingsOpen(true)} />
       <main className="app-main">
-        {screen === 'setup' && <Setup catalog={catalog} resume={resume} onResume={setResume} onStart={start} modelReady={modelConfig.enabled && modelConfig.hasApiKey} notify={setToast} />}
+        {screen === 'setup' && <Setup catalog={catalog} catalogLoading={catalogLoading} catalogError={catalogError} onRetryCatalog={loadCatalog} resume={resume} onResume={setResume} onStart={start} modelReady={modelConfig.enabled && modelConfig.hasApiKey} notify={setToast} />}
         {screen === 'interview' && session && (
           <InterviewScreen session={session} turns={turns} setTurns={setTurns} setSession={setSession} onFinish={finish} onBack={restart} notify={setToast} />
         )}
@@ -142,7 +153,7 @@ function Sidebar({ screen, modelReady, onHome, onLearning, onKnowledge, onSettin
   )
 }
 
-function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { catalog?: SkillCatalog; resume?: Resume; onResume: (value: Resume) => void; onStart: (value: Session) => void; modelReady: boolean; notify: (value: Toast) => void }) {
+function Setup({ catalog, catalogLoading, catalogError, onRetryCatalog, resume, onResume, onStart, modelReady, notify }: { catalog?: SkillCatalog; catalogLoading: boolean; catalogError: string; onRetryCatalog: () => Promise<void>; resume?: Resume; onResume: (value: Resume) => void; onStart: (value: Session) => void; modelReady: boolean; notify: (value: Toast) => void }) {
   const [candidateName, setCandidateName] = useState('')
   const [industry, setIndustry] = useState('computer')
   const [domainSkillId, setDomainSkillId] = useState('computer-golang')
@@ -186,6 +197,8 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
         <div className="hero-orbit" aria-hidden="true"><span className="orbit orbit-one" /><span className="orbit orbit-two" /><BrainCircuit size={56} /></div>
       </header>
 
+      {catalogError && <div className="skill-load-alert"><CircleAlert size={19} /><div><strong>Skill 目录没有加载成功</strong><p>{catalogError}。请确认本地服务已启动后重试。</p></div><button onClick={() => void onRetryCatalog()}><RefreshCw size={15} />重新加载 Skill</button></div>}
+
       <div className="setup-grid">
         <section className="panel resume-panel">
           <div className="section-heading"><span className="heading-icon mint"><FileText size={19} /></span><div><h2>先让我认识你</h2><p>简历可选，上传后会优先匹配你的技术经历</p></div><span className="optional">可选</span></div>
@@ -207,16 +220,16 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
         <section className="panel direction-panel">
           <div className="section-heading"><span className="heading-icon violet"><Code2 size={19} /></span><div><h2>选择行业 / 领域 Skill</h2><p>每个 Skill 绑定独立知识库，后续可直接扩展新行业</p></div></div>
           <div className="industry-tabs">{(catalog?.industries ?? [{ id: 'computer', name: '计算机' }]).map((option) => <button key={option.id} className={industry === option.id ? 'selected' : ''} onClick={() => setIndustry(option.id)}>{option.name}</button>)}<span>更多行业 Skill 敬请期待</span></div>
-          <div className="language-grid">{domainSkills.map((option) => (
+          {catalogLoading ? <div className="skill-loading"><LoaderCircle className="spin" size={20} />正在加载领域 Skill…</div> : <div className="language-grid">{domainSkills.map((option) => (
             <button key={option.id} className={`language-card ${domainSkillId === option.id ? 'selected' : ''}`} onClick={() => setDomainSkillId(option.id)} style={{ '--language-color': option.accent } as CSSProperties}>
               <span className="language-badge">{option.shortLabel}</span><span><strong>{option.name}</strong><small>{option.topics?.slice(0, 3).join(' · ')}</small></span>{domainSkillId === option.id && <Check className="language-check" size={15} />}
             </button>
-          ))}</div>
+          ))}</div>}
         </section>
 
         <section className="panel interviewer-panel">
           <div className="section-heading"><span className="heading-icon mint"><Bot size={19} /></span><div><h2>选择面试官风格 Skill</h2><p>同一道题，不同面试官会用不同的评价重点和反馈语气</p></div></div>
-          <div className="interviewer-grid">{(catalog?.interviewers ?? []).map((skill) => <button key={skill.id} className={interviewerSkillId === skill.id ? 'selected' : ''} onClick={() => setInterviewerSkillId(skill.id)} style={{ '--skill-color': skill.accent } as CSSProperties}><span className="interviewer-avatar"><Bot size={18} /></span><strong>{skill.name}</strong><p>{skill.description}</p><small>{skill.evaluationFocus?.join(' · ')}</small>{interviewerSkillId === skill.id && <Check className="skill-check" size={15} />}</button>)}</div>
+          {catalogLoading ? <div className="skill-loading"><LoaderCircle className="spin" size={20} />正在加载面试官 Skill…</div> : <div className="interviewer-grid">{(catalog?.interviewers ?? []).map((skill) => <button key={skill.id} className={interviewerSkillId === skill.id ? 'selected' : ''} onClick={() => setInterviewerSkillId(skill.id)} style={{ '--skill-color': skill.accent } as CSSProperties}><span className="interviewer-avatar"><Bot size={18} /></span><strong>{skill.name}</strong><p>{skill.description}</p><small>{skill.evaluationFocus?.join(' · ')}</small>{interviewerSkillId === skill.id && <Check className="skill-check" size={15} />}</button>)}</div>}
         </section>
 
         <section className="panel preferences-panel">

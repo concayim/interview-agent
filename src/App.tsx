@@ -39,7 +39,7 @@ import { api } from './api'
 import type { Difficulty, Evaluation, KnowledgeBase, Language, LearningResource, ModelConfig, QAItem, Question, Report, Resume, Session, SkillCatalog } from './types'
 
 type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
-type Turn = { question: Question; answer: string; evaluation: Evaluation }
+type Turn = { question: Question; answer: string; evaluation: Evaluation; mainIndex: number }
 type Toast = { type: 'success' | 'error'; message: string }
 
 const languageOptions: { value: Language; label: string; short: string; caption: string; color: string }[] = [
@@ -155,10 +155,8 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (difficulty !== 'mixed') setQuestionCount(2)
-    else if (questionCount === 2) setQuestionCount(5)
-  }, [difficulty])
+  const maxQuestionCount = difficulty === 'mixed' ? (includeFoundation ? 12 : 6) : (includeFoundation ? 4 : 2)
+  useEffect(() => { if (questionCount > maxQuestionCount) setQuestionCount(maxQuestionCount) }, [difficulty, includeFoundation, maxQuestionCount, questionCount])
 
   const upload = async (file?: File) => {
     if (!file) return
@@ -178,6 +176,8 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
   }
 
   const domainSkills = (catalog?.domains ?? []).filter((skill) => skill.industry === industry && skill.language !== 'foundation')
+  const selectedInterviewer = catalog?.interviewers.find((skill) => skill.id === interviewerSkillId)
+  const followUpRounds = selectedInterviewer?.followUpRounds ?? 2
 
   return (
     <div className="setup-page page-enter">
@@ -226,9 +226,9 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
           <label className="field-label">面试难度</label>
           <div className="difficulty-row">{difficultyOptions.map((option) => <button key={option.value} className={difficulty === option.value ? 'selected' : ''} onClick={() => setDifficulty(option.value)}><strong>{option.label}</strong><small>{option.caption}</small></button>)}</div>
           <label className="foundation-toggle"><input type="checkbox" checked={includeFoundation} onChange={(event) => setIncludeFoundation(event.target.checked)} /><span><LibraryBig size={16} /><strong>混入计算机基础公共库</strong><small>每场加入 1–2 道操作系统、网络、数据库或分布式基础题</small></span><i /></label>
-          {difficulty === 'mixed' && <div className="count-row"><span><MessageSquareText size={16} />题目数量</span><div>{[3, 5, 6].map((count) => <button key={count} className={questionCount === count ? 'selected' : ''} onClick={() => setQuestionCount(count)}>{count} 题</button>)}</div></div>}
+          <div className="count-row"><span><MessageSquareText size={16} /><span><strong>主问题数量</strong><small>每题还会连续追问 {followUpRounds} 轮</small></span></span><div className="count-stepper"><button onClick={() => setQuestionCount(Math.max(1, questionCount - 1))} disabled={questionCount <= 1}>−</button><input aria-label="主问题数量" type="number" min={1} max={maxQuestionCount} value={questionCount} onChange={(event) => setQuestionCount(Math.min(maxQuestionCount, Math.max(1, Number(event.target.value) || 1)))} /><button onClick={() => setQuestionCount(Math.min(maxQuestionCount, questionCount + 1))} disabled={questionCount >= maxQuestionCount}>＋</button><em>最多 {maxQuestionCount} 题</em></div></div>
           <button className="primary-action" onClick={start} disabled={starting || !catalog}>{starting ? <LoaderCircle className="spin" size={19} /> : <Sparkles size={18} />}开始模拟面试<ArrowRight size={18} /></button>
-          <div className="start-hint"><span><Clock3 size={14} />约 {questionCount * 3}–{questionCount * 5} 分钟</span><span><Bot size={14} />{modelReady ? 'AI 深度点评' : '本地关键点评分'}</span></div>
+          <div className="start-hint"><span><Clock3 size={14} />约 {questionCount * (followUpRounds + 1) * 2}–{questionCount * (followUpRounds + 1) * 4} 分钟</span><span><Bot size={14} />共 {questionCount * (followUpRounds + 1)} 轮对话 · {modelReady ? 'AI 动态追问' : '本地智能追问'}</span></div>
         </section>
 
         <aside className="coach-card">
@@ -256,13 +256,13 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     try {
       const question = session.currentQuestion
       const result = await api.answer(session.id, trimmed, Math.floor((Date.now() - questionStartedAt) / 1000))
-      setTurns((previous) => [...previous, { question, answer: trimmed, evaluation: result.evaluation }])
+      setTurns((previous) => [...previous, { question, answer: trimmed, evaluation: result.evaluation, mainIndex: session.current + 1 }])
       setAnswer('')
       if (result.completed && result.report) {
         setReadyReport(result.report)
-        setSession({ ...session, current: result.current, status: 'completed', currentQuestion: undefined })
+        setSession({ ...session, current: result.current, followUpRound: 0, status: 'completed', currentQuestion: undefined })
       } else if (result.nextQuestion) {
-        setSession({ ...session, current: result.current, currentQuestion: result.nextQuestion })
+        setSession({ ...session, current: result.current, followUpRound: result.followUpRound, followUpTotal: result.followUpTotal, currentQuestion: result.nextQuestion })
         setQuestionStartedAt(Date.now())
       }
     } catch (error) {
@@ -275,17 +275,17 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       <header className="interview-topbar">
         <button className="icon-button" onClick={onBack} title="退出本场面试"><ArrowLeft size={19} /></button>
         <div className="interview-title"><span className="live-dot" /><div><strong>{session.domainSkillName || languageLabel(session.language)}</strong><small>{session.candidateName} · {difficultyLabel(session.difficulty)} · {session.interviewerName}</small></div></div>
-        <div className="progress-block"><div><span>进度</span><strong>{Math.min(session.current + 1, session.total)} / {session.total}</strong></div><div className="progress-track"><span style={{ width: `${Math.min(100, (session.current / session.total) * 100)}%` }} /></div></div>
+        <div className="progress-block"><div><span>{session.currentQuestion?.followUp ? `第 ${session.current + 1} 题 · 追问 ${session.currentQuestion.round}/${session.currentQuestion.followUpTotal}` : '主问题进度'}</span><strong>{Math.min(session.current + 1, session.total)} / {session.total}</strong></div><div className="progress-track"><span style={{ width: `${Math.min(100, ((session.current + (session.followUpRound / Math.max(1, session.followUpTotal + 1))) / session.total) * 100)}%` }} /></div></div>
         <div className="timer"><Clock3 size={16} />{formatTime(elapsed)}</div>
       </header>
       <div className="interview-layout">
         <section className="conversation">
           <div className="conversation-intro"><span><Bot size={21} /></span><div><strong>{session.interviewerName}</strong><p>你好，{session.candidateName}。{session.interviewerOpening}</p></div></div>
-          {turns.map((turn, index) => <TurnCard key={turn.question.id} turn={turn} index={index + 1} interviewerName={session.interviewerName} />)}
+          {turns.map((turn) => <TurnCard key={turn.question.promptId || `${turn.question.id}-${turn.question.round}`} turn={turn} interviewerName={session.interviewerName} />)}
           {session.currentQuestion && (
             <div className="question-message">
               <div className="message-avatar"><Bot size={18} /></div>
-              <div className="message-content"><div className="message-meta"><strong>{session.interviewerName}</strong><span>第 {session.current + 1} 题</span></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
+              <div className={`message-content ${session.currentQuestion.followUp ? 'follow-up-question' : ''}`}><div className="message-meta"><strong>{session.interviewerName}</strong><span>{session.currentQuestion.followUp ? `第 ${session.current + 1} 题 · 追问 ${session.currentQuestion.round}/${session.currentQuestion.followUpTotal}` : `第 ${session.current + 1} 题 · 主问题`}</span></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.followUp && <span className="follow-up-chip">连续追问</span>}{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
             </div>
           )}
           {readyReport && <div className="completion-card"><span><Sparkles size={26} /></span><h2>这场面试完成了</h2><p>你认真回答了 {readyReport.answered} 道题。标准答案、逐题评分和下一步练习建议都已经整理好。</p><button className="primary-action compact" onClick={() => onFinish(readyReport)}>查看我的复盘<ArrowRight size={18} /></button></div>}
@@ -297,17 +297,17 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         </aside>
       </div>
       {session.currentQuestion && (
-        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="说说你的思路… 可以先写结论，再补充细节" /><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '正在点评' : '提交回答'}</button></div></div></div>
+        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder={session.currentQuestion.followUp ? `回应第 ${session.currentQuestion.round} 轮追问… 延续刚才的思路，补充边界或案例` : '说说你的思路… 可以先写结论，再补充细节'} /><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '正在点评并准备追问' : '提交回答'}</button></div></div></div>
       )}
     </div>
   )
 }
 
-function TurnCard({ turn, index, interviewerName }: { turn: Turn; index: number; interviewerName: string }) {
+function TurnCard({ turn, interviewerName }: { turn: Turn; interviewerName: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="turn-block">
-      <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className="message-content"><div className="message-meta"><strong>{interviewerName}</strong><span>第 {index} 题</span></div><p>{turn.question.prompt}</p></div></div>
+      <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className={`message-content ${turn.question.followUp ? 'follow-up-question' : ''}`}><div className="message-meta"><strong>{interviewerName}</strong><span>{turn.question.followUp ? `第 ${turn.mainIndex} 题 · 追问 ${turn.question.round}/${turn.question.followUpTotal}` : `第 ${turn.mainIndex} 题 · 主问题`}</span></div><p>{turn.question.prompt}</p></div></div>
       <div className="answer-message"><div className="answer-bubble"><p>{turn.answer}</p></div><div className="user-avatar"><UserRound size={17} /></div></div>
       <button className={`inline-evaluation ${open ? 'open' : ''}`} onClick={() => setOpen(!open)}><span className={`score-dot score-${scoreBand(turn.evaluation.score)}`}>{turn.evaluation.score}</span><span><strong>{turn.evaluation.summary}</strong><small>{turn.evaluation.source === 'llm' ? 'Eino AI 点评' : '本地关键点评分'} · 点击{open ? '收起' : '展开'}</small></span><ChevronDown size={18} />
         {open && <div className="evaluation-details"><div><Check size={15} /><p>{turn.evaluation.strengths.join('；')}</p></div><div><Zap size={15} /><p>{turn.evaluation.improvements.join('；')}</p></div></div>}
@@ -326,13 +326,14 @@ function ReviewScreen({ report, onRestart }: { report: Report; onRestart: () => 
         <div className="score-copy"><span className={`performance-pill ${scoreBand(report.score)}`}>{performanceText(report.score)}</span><h2>{report.score >= 80 ? '表达清晰，继续保持工程细节。' : report.score >= 60 ? '基本盘不错，再补齐关键边界。' : '已经找到薄弱点，这正是练习的价值。'}</h2><p>得分由逐题关键点或 Eino 模型评价汇总。建议先看“值得保留”，再逐题对照标准答案。</p></div>
         <div className="summary-columns"><div><span className="summary-icon good"><Check size={17} /></span><section><strong>值得保留</strong>{report.highlights.length ? report.highlights.map((item) => <p key={item}>{item}</p>) : <p>完成了全部作答</p>}</section></div><div><span className="summary-icon focus"><Target size={17} /></span><section><strong>下轮重点</strong>{report.focusAreas.length ? report.focusAreas.map((item) => <p key={item}>{item}</p>) : <p>多用项目案例支撑结论</p>}</section></div></div>
       </div>
-      <section className="review-list"><div className="review-heading"><div><h2>逐题回看</h2><p>你的回答、点评与标准答案都在这里</p></div><span>{report.answers.length} 个回答</span></div>
-        {report.answers.map((record, index) => (
-          <article key={record.question.id} className={`review-item ${openIndex === index ? 'open' : ''}`}>
-            <button className="review-item-head" onClick={() => setOpenIndex(openIndex === index ? -1 : index)}><span className="question-number">{String(index + 1).padStart(2, '0')}</span><div><h3>{record.question.prompt}</h3><span>{record.question.tags.join(' · ')}</span></div><span className={`review-score ${scoreBand(record.evaluation.score)}`}>{record.evaluation.score} 分</span><ChevronRight size={19} /></button>
-            {openIndex === index && <div className="review-body"><div className="answer-compare"><section><span className="compare-label"><UserRound size={15} />你的回答</span><p>{record.answer}</p></section><section className="standard"><span className="compare-label"><Sparkles size={15} />标准答案</span><p>{record.question.standardAnswer}</p><div className="key-points">{record.question.keyPoints.map((point) => <span key={point}>{point.split('/')[0]}</span>)}</div></section></div><div className="coach-feedback"><BrainCircuit size={18} /><div><strong>面试官点评</strong><p>{record.evaluation.summary} {record.evaluation.improvements.join('；')}</p></div></div></div>}
+      <section className="review-list"><div className="review-heading"><div><h2>逐题回看</h2><p>主回答、连续追问、点评与标准答案都在这里</p></div><span>{report.answers.length} 个主问题 · {report.answers.reduce((total, record) => total + 1 + (record.followUps?.length ?? 0), 0)} 轮对话</span></div>
+        {report.answers.map((record, index) => {
+          const score = record.averageScore || record.evaluation.score
+          return <article key={record.question.id} className={`review-item ${openIndex === index ? 'open' : ''}`}>
+            <button className="review-item-head" onClick={() => setOpenIndex(openIndex === index ? -1 : index)}><span className="question-number">{String(index + 1).padStart(2, '0')}</span><div><h3>{record.question.prompt}</h3><span>{record.question.tags.join(' · ')} · {(record.followUps?.length ?? 0)} 轮追问</span></div><span className={`review-score ${scoreBand(score)}`}>{score} 分</span><ChevronRight size={19} /></button>
+            {openIndex === index && <div className="review-body"><div className="answer-compare"><section><span className="compare-label"><UserRound size={15} />主回答</span><p>{record.answer}</p></section><section className="standard"><span className="compare-label"><Sparkles size={15} />标准答案</span><p>{record.question.standardAnswer}</p><div className="key-points">{record.question.keyPoints.map((point) => <span key={point}>{point.split('/')[0]}</span>)}</div></section></div><div className="coach-feedback"><BrainCircuit size={18} /><div><strong>主回答点评</strong><p>{record.evaluation.summary} {record.evaluation.improvements.join('；')}</p></div></div>{record.followUps?.length > 0 && <div className="follow-up-review"><span className="follow-up-review-title"><MessageSquareText size={15} />连续追问记录</span>{record.followUps.map((followUp) => <section key={followUp.round}><div><strong>追问 {followUp.round}</strong><em>{followUp.evaluation.score} 分</em></div><h4>{followUp.prompt}</h4><p><span>你的回答</span>{followUp.answer}</p><small>{followUp.evaluation.summary} {followUp.evaluation.improvements.join('；')}</small></section>)}</div>}</div>}
           </article>
-        ))}
+        })}
       </section>
       <div className="review-footer"><button className="primary-action compact" onClick={onRestart}><RefreshCw size={17} />开始下一场</button></div>
     </div>

@@ -24,15 +24,19 @@ type Question struct {
 }
 
 type PublicQuestion struct {
-	ID         string   `json:"id"`
-	Language   string   `json:"language"`
-	Difficulty string   `json:"difficulty"`
-	Prompt     string   `json:"prompt"`
-	Tags       []string `json:"tags"`
+	ID            string   `json:"id"`
+	PromptID      string   `json:"promptId"`
+	Language      string   `json:"language"`
+	Difficulty    string   `json:"difficulty"`
+	Prompt        string   `json:"prompt"`
+	Tags          []string `json:"tags"`
+	FollowUp      bool     `json:"followUp"`
+	Round         int      `json:"round"`
+	FollowUpTotal int      `json:"followUpTotal"`
 }
 
 func (q Question) Public() PublicQuestion {
-	return PublicQuestion{ID: q.ID, Language: q.Language, Difficulty: q.Difficulty, Prompt: q.Prompt, Tags: q.Tags}
+	return PublicQuestion{ID: q.ID, PromptID: q.ID, Language: q.Language, Difficulty: q.Difficulty, Prompt: q.Prompt, Tags: q.Tags}
 }
 
 type Evaluation struct {
@@ -44,7 +48,17 @@ type Evaluation struct {
 }
 
 type AnswerRecord struct {
-	Question       Question   `json:"question"`
+	Question       Question         `json:"question"`
+	Answer         string           `json:"answer"`
+	ElapsedSeconds int              `json:"elapsedSeconds"`
+	Evaluation     Evaluation       `json:"evaluation"`
+	FollowUps      []FollowUpRecord `json:"followUps"`
+	AverageScore   int              `json:"averageScore"`
+}
+
+type FollowUpRecord struct {
+	Round          int        `json:"round"`
+	Prompt         string     `json:"prompt"`
 	Answer         string     `json:"answer"`
 	ElapsedSeconds int        `json:"elapsedSeconds"`
 	Evaluation     Evaluation `json:"evaluation"`
@@ -69,6 +83,9 @@ type Session struct {
 	Status             string         `json:"status"`
 	Questions          []Question     `json:"-"`
 	Current            int            `json:"current"`
+	FollowUpRound      int            `json:"followUpRound"`
+	FollowUpTotal      int            `json:"followUpTotal"`
+	CurrentPrompt      string         `json:"-"`
 	Answers            []AnswerRecord `json:"answers"`
 	StartedAt          time.Time      `json:"startedAt"`
 	CompletedAt        *time.Time     `json:"completedAt,omitempty"`

@@ -20,7 +20,7 @@ func TestLoadCatalog(t *testing.T) {
 		}
 	}
 	vera, ok := catalog.Interviewer("vera-challenger")
-	if !ok || vera.Prompt == "" {
+	if !ok || vera.Prompt == "" || vera.FollowUpRounds != 3 {
 		t.Fatal("private interviewer prompt was not loaded")
 	}
 	for _, skill := range public.Interviewers {

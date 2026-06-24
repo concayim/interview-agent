@@ -148,7 +148,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ctx, cancel := contextWithTimeout(r, 55*time.Second)
+	ctx, cancel := contextWithTimeout(r, 75*time.Second)
 	defer cancel()
 	result, err := s.interviews.Answer(ctx, r.PathValue("id"), input)
 	if errors.Is(err, interview.ErrNotFound) {

@@ -10,10 +10,14 @@ export type Resume = {
 
 export type Question = {
   id: string
+  promptId: string
   language: Language
   difficulty: Difficulty
   prompt: string
   tags: string[]
+  followUp: boolean
+  round: number
+  followUpTotal: number
 }
 
 export type Evaluation = {
@@ -39,6 +43,8 @@ export type Session = {
   status: 'active' | 'completed'
   current: number
   total: number
+  followUpRound: number
+  followUpTotal: number
   currentQuestion?: Question
   startedAt: string
 }
@@ -48,6 +54,14 @@ export type AnswerRecord = {
   answer: string
   elapsedSeconds: number
   evaluation: Evaluation
+  followUps: {
+    round: number
+    prompt: string
+    answer: string
+    elapsedSeconds: number
+    evaluation: Evaluation
+  }[]
+  averageScore: number
 }
 
 export type Report = {
@@ -69,10 +83,13 @@ export type Report = {
 
 export type AnswerResult = {
   evaluation: Evaluation
+  questionCompleted: boolean
   completed: boolean
   nextQuestion?: Question
   current: number
   total: number
+  followUpRound: number
+  followUpTotal: number
   report?: Report
 }
 
@@ -94,6 +111,7 @@ export type Skill = {
   openingLine?: string
   evaluationFocus?: string[]
   feedbackTone?: string
+  followUpRounds?: number
   industry?: string
   industryName?: string
   domain?: string

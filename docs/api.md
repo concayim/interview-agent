@@ -1,6 +1,6 @@
 # Interview Copilot API
 
-版本：`v1`（应用 `v0.2.0`）
+版本：`v1`（应用 `v0.3.0`）
 
 本地地址：`http://127.0.0.1:46831/api/v1`
 
@@ -70,7 +70,8 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
       "accent": "#ff8194",
       "openingLine": "我会比较直接…",
       "evaluationFocus": ["事实准确性", "边界条件", "抗压表达", "反例意识"],
-      "feedbackTone": "直接、严格、不刻薄"
+      "feedbackTone": "直接、严格、不刻薄",
+      "followUpRounds": 3
     }
   ],
   "domains": [
@@ -113,7 +114,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 - `interviewerSkillId`: `echo-coach | atlas-architect | vera-challenger | socrates-guide`
 - `includeFoundation`: 是否混入计算机基础公共库
 - `difficulty`: `easy | medium | hard | mixed`
-- `questionCount`: `1..10`，若超过当前筛选结果则返回实际可用数量
+- `questionCount`: 自定义主问题数量，接口范围 `1..20`；实际数量不超过当前难度与知识库的可用题数
 
 响应 `201`：
 
@@ -133,12 +134,18 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "status": "active",
   "current": 0,
   "total": 5,
+  "followUpRound": 0,
+  "followUpTotal": 3,
   "currentQuestion": {
     "id": "go-01",
+    "promptId": "go-01",
     "language": "golang",
     "difficulty": "easy",
     "prompt": "Go 的 goroutine 和操作系统线程有什么区别？",
-    "tags": ["Go", "高并发", "调度器"]
+    "tags": ["Go", "高并发", "调度器"],
+    "followUp": false,
+    "round": 0,
+    "followUpTotal": 3
   },
   "startedAt": "2026-06-22T12:00:00+08:00"
 }
@@ -161,7 +168,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 }
 ```
 
-未完成时响应 `200`：
+提交主回答后，通常返回第 1 轮追问：
 
 ```json
 {
@@ -172,14 +179,27 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
     "improvements": ["补充动态栈和工作窃取"],
     "source": "llm"
   },
+  "questionCompleted": false,
   "completed": false,
-  "nextQuestion": { "id": "go-02", "language": "golang", "difficulty": "easy", "prompt": "…", "tags": ["Go"] },
-  "current": 1,
-  "total": 5
+  "nextQuestion": {
+    "id": "go-01",
+    "promptId": "go-01-followup-1",
+    "language": "golang",
+    "difficulty": "easy",
+    "prompt": "追问 1/3：如果把 goroutine 放进真实系统，你会如何定义约束和容量？",
+    "tags": ["Go"],
+    "followUp": true,
+    "round": 1,
+    "followUpTotal": 3
+  },
+  "current": 0,
+  "total": 5,
+  "followUpRound": 1,
+  "followUpTotal": 3
 }
 ```
 
-最后一题的响应中 `completed` 为 `true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
+完成一个主问题的最后一轮追问时，`questionCompleted=true`，`current` 加一，`nextQuestion` 变为下一主问题。最后一个主问题完成时 `completed=true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
 
 ### `GET /interviews/{id}/report`
 
@@ -209,7 +229,17 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
       },
       "answer": "…",
       "elapsedSeconds": 95,
-      "evaluation": { "score": 82, "summary": "…", "strengths": [], "improvements": [], "source": "llm" }
+      "evaluation": { "score": 82, "summary": "…", "strengths": [], "improvements": [], "source": "llm" },
+      "followUps": [
+        {
+          "round": 1,
+          "prompt": "如果放进真实系统，你会如何定义约束和容量？",
+          "answer": "我会先估算并发量…",
+          "elapsedSeconds": 61,
+          "evaluation": { "score": 86, "summary": "…", "strengths": [], "improvements": [], "source": "llm" }
+        }
+      ],
+      "averageScore": 84
     }
   ],
   "startedAt": "2026-06-22T12:00:00+08:00",

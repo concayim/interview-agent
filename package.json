@@ -1,6 +1,6 @@
 {
   "name": "interview-copilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A resume-aware interview practice agent powered by Go, Eino and Electron.",
   "main": "electron/main.cjs",

@@ -31,3 +31,24 @@ func TestEveryLanguageHasQuestions(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomQuestionCountUsesFoundationCapacity(t *testing.T) {
+	selected, err := SelectWithFoundation("golang", "mixed", 11, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 11 {
+		t.Fatalf("expected 11 custom questions, got %d", len(selected))
+	}
+	seen := map[string]bool{}
+	for _, question := range selected {
+		if seen[question.ID] {
+			t.Fatalf("duplicate question %s", question.ID)
+		}
+		seen[question.ID] = true
+	}
+	withoutFoundation, err := SelectWithFoundation("golang", "mixed", 6, nil, false)
+	if err != nil || len(withoutFoundation) != 6 {
+		t.Fatalf("expected 6 language questions, got %d (%v)", len(withoutFoundation), err)
+	}
+}

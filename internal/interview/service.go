@@ -54,17 +54,22 @@ type SessionView struct {
 	Status             string                 `json:"status"`
 	Current            int                    `json:"current"`
 	Total              int                    `json:"total"`
+	FollowUpRound      int                    `json:"followUpRound"`
+	FollowUpTotal      int                    `json:"followUpTotal"`
 	CurrentQuestion    *domain.PublicQuestion `json:"currentQuestion,omitempty"`
 	StartedAt          time.Time              `json:"startedAt"`
 }
 
 type AnswerResult struct {
-	Evaluation   domain.Evaluation      `json:"evaluation"`
-	Completed    bool                   `json:"completed"`
-	NextQuestion *domain.PublicQuestion `json:"nextQuestion,omitempty"`
-	Current      int                    `json:"current"`
-	Total        int                    `json:"total"`
-	Report       *domain.Report         `json:"report,omitempty"`
+	Evaluation        domain.Evaluation      `json:"evaluation"`
+	QuestionCompleted bool                   `json:"questionCompleted"`
+	Completed         bool                   `json:"completed"`
+	NextQuestion      *domain.PublicQuestion `json:"nextQuestion,omitempty"`
+	Current           int                    `json:"current"`
+	Total             int                    `json:"total"`
+	FollowUpRound     int                    `json:"followUpRound"`
+	FollowUpTotal     int                    `json:"followUpTotal"`
+	Report            *domain.Report         `json:"report,omitempty"`
 }
 
 type Service struct {
@@ -115,6 +120,12 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 	if input.Difficulty == "" {
 		input.Difficulty = "mixed"
 	}
+	if input.QuestionCount < 1 {
+		return SessionView{}, fmt.Errorf("主问题数量至少为 1")
+	}
+	if input.QuestionCount > 20 {
+		return SessionView{}, fmt.Errorf("主问题数量不能超过 20")
+	}
 	if s.catalog == nil {
 		return SessionView{}, fmt.Errorf("Skill 目录不可用")
 	}
@@ -135,6 +146,12 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 	interviewerSkill, ok := s.catalog.Interviewer(interviewerSkillID)
 	if !ok {
 		return SessionView{}, fmt.Errorf("请选择有效的面试官 Skill")
+	}
+	if interviewerSkill.FollowUpRounds < 2 {
+		interviewerSkill.FollowUpRounds = 2
+	}
+	if interviewerSkill.FollowUpRounds > 3 {
+		interviewerSkill.FollowUpRounds = 3
 	}
 	input.Language = domainSkill.Language
 	var keywords []string
@@ -157,7 +174,7 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 			return SessionView{}, fmt.Errorf("记录出题 QA 失败: %w", err)
 		}
 	}
-	session := &domain.Session{ID: newID("session"), CandidateName: input.CandidateName, ResumeID: input.ResumeID, Language: input.Language, Difficulty: input.Difficulty, Industry: domainSkill.Industry, DomainSkillID: domainSkill.ID, DomainSkillName: domainSkill.Name, InterviewerSkillID: interviewerSkill.ID, InterviewerName: interviewerSkill.Name, InterviewerOpening: interviewerSkill.OpeningLine, InterviewerPrompt: interviewerSkill.Prompt, EvaluationFocus: interviewerSkill.EvaluationFocus, FeedbackTone: interviewerSkill.FeedbackTone, IncludeFoundation: input.IncludeFoundation, Status: "active", Questions: selected, StartedAt: time.Now()}
+	session := &domain.Session{ID: newID("session"), CandidateName: input.CandidateName, ResumeID: input.ResumeID, Language: input.Language, Difficulty: input.Difficulty, Industry: domainSkill.Industry, DomainSkillID: domainSkill.ID, DomainSkillName: domainSkill.Name, InterviewerSkillID: interviewerSkill.ID, InterviewerName: interviewerSkill.Name, InterviewerOpening: interviewerSkill.OpeningLine, InterviewerPrompt: interviewerSkill.Prompt, EvaluationFocus: interviewerSkill.EvaluationFocus, FeedbackTone: interviewerSkill.FeedbackTone, IncludeFoundation: input.IncludeFoundation, FollowUpTotal: interviewerSkill.FollowUpRounds, Status: "active", Questions: selected, StartedAt: time.Now()}
 	s.mu.Lock()
 	s.sessions[session.ID] = session
 	s.mu.Unlock()
@@ -199,12 +216,47 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 		s.mu.RUnlock()
 		return AnswerResult{}, ErrCompleted
 	}
+	if session.Current >= len(session.Questions) {
+		s.mu.RUnlock()
+		return AnswerResult{}, ErrCompleted
+	}
 	question := session.Questions[session.Current]
+	currentIndex := session.Current
+	currentRound := session.FollowUpRound
+	currentPrompt := question.Prompt
+	if currentRound > 0 {
+		currentPrompt = session.CurrentPrompt
+	}
+	interviewerName := session.InterviewerName
+	interviewerPrompt := session.InterviewerPrompt
+	evaluationFocus := append([]string(nil), session.EvaluationFocus...)
+	feedbackTone := session.FeedbackTone
+	interviewerSkillID := session.InterviewerSkillID
+	followUpTotal := session.FollowUpTotal
+	previousAnswers := currentAnswers(session)
 	s.mu.RUnlock()
 
-	evaluation, err := s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: question, CandidateAnswer: input.Answer, InterviewerName: session.InterviewerName, InterviewerPrompt: session.InterviewerPrompt, EvaluationFocus: session.EvaluationFocus, FeedbackTone: session.FeedbackTone})
+	evaluationQuestion := question
+	evaluationQuestion.Prompt = currentPrompt
+	evaluation, err := s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: evaluationQuestion, CandidateAnswer: input.Answer, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, EvaluationFocus: evaluationFocus, FeedbackTone: feedbackTone})
 	if err != nil {
-		evaluation = localEvaluate(question, input.Answer, err, session.InterviewerSkillID)
+		if currentRound > 0 {
+			evaluation = localFollowUpEvaluate(input.Answer, err, interviewerSkillID)
+		} else {
+			evaluation = localEvaluate(evaluationQuestion, input.Answer, err, interviewerSkillID)
+		}
+	}
+
+	nextRound := currentRound + 1
+	nextPrompt := ""
+	if nextRound <= followUpTotal {
+		answers := append(previousAnswers, input.Answer)
+		if generator, ok := s.evaluator.(agent.FollowUpGenerator); ok {
+			nextPrompt, err = generator.GenerateFollowUp(ctx, agent.FollowUpInput{Question: question, CandidateAnswers: answers, Round: nextRound, Total: followUpTotal, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, EvaluationFocus: evaluationFocus})
+		}
+		if nextPrompt == "" || err != nil {
+			nextPrompt = fallbackFollowUp(question, answers, nextRound, followUpTotal, interviewerSkillID)
+		}
 	}
 
 	s.mu.Lock()
@@ -216,13 +268,36 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 	if session.Status == "completed" || session.Current >= len(session.Questions) {
 		return AnswerResult{}, ErrCompleted
 	}
-	// Prevent a slow duplicate request from recording the same question twice.
-	if session.Questions[session.Current].ID != question.ID {
-		return AnswerResult{}, fmt.Errorf("该题已经提交，请继续下一题")
+	// Prevent a slow duplicate request from recording the same interview round twice.
+	if session.Current != currentIndex || session.FollowUpRound != currentRound || session.Questions[session.Current].ID != question.ID {
+		return AnswerResult{}, fmt.Errorf("该轮回答已经提交，请继续当前面试")
 	}
-	session.Answers = append(session.Answers, domain.AnswerRecord{Question: question, Answer: input.Answer, ElapsedSeconds: input.ElapsedSeconds, Evaluation: evaluation})
+	if currentRound == 0 {
+		session.Answers = append(session.Answers, domain.AnswerRecord{Question: question, Answer: input.Answer, ElapsedSeconds: input.ElapsedSeconds, Evaluation: evaluation, AverageScore: evaluation.Score})
+	} else {
+		if len(session.Answers) == 0 || session.Answers[len(session.Answers)-1].Question.ID != question.ID {
+			return AnswerResult{}, fmt.Errorf("追问上下文不存在")
+		}
+		record := &session.Answers[len(session.Answers)-1]
+		record.FollowUps = append(record.FollowUps, domain.FollowUpRecord{Round: currentRound, Prompt: currentPrompt, Answer: input.Answer, ElapsedSeconds: input.ElapsedSeconds, Evaluation: evaluation})
+		record.AverageScore = answerAverage(*record)
+	}
+	result := AnswerResult{Evaluation: evaluation, Current: session.Current, Total: len(session.Questions), FollowUpRound: currentRound, FollowUpTotal: followUpTotal}
+	if nextRound <= followUpTotal {
+		session.FollowUpRound = nextRound
+		session.CurrentPrompt = nextPrompt
+		next := followUpPublic(question, nextPrompt, nextRound, followUpTotal)
+		result.NextQuestion = &next
+		result.FollowUpRound = nextRound
+		return result, nil
+	}
+
+	result.QuestionCompleted = true
 	session.Current++
-	result := AnswerResult{Evaluation: evaluation, Current: session.Current, Total: len(session.Questions)}
+	session.FollowUpRound = 0
+	session.CurrentPrompt = ""
+	result.Current = session.Current
+	result.FollowUpRound = 0
 	if session.Current >= len(session.Questions) {
 		now := time.Now()
 		session.Status = "completed"
@@ -233,6 +308,7 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 		return result, nil
 	}
 	next := session.Questions[session.Current].Public()
+	next.FollowUpTotal = followUpTotal
 	result.NextQuestion = &next
 	return result, nil
 }
@@ -251,12 +327,103 @@ func (s *Service) Report(id string) (domain.Report, error) {
 }
 
 func view(session *domain.Session) SessionView {
-	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Industry: session.Industry, DomainSkillID: session.DomainSkillID, DomainSkillName: session.DomainSkillName, InterviewerSkillID: session.InterviewerSkillID, InterviewerName: session.InterviewerName, InterviewerOpening: session.InterviewerOpening, IncludeFoundation: session.IncludeFoundation, Status: session.Status, Current: session.Current, Total: len(session.Questions), StartedAt: session.StartedAt}
+	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Industry: session.Industry, DomainSkillID: session.DomainSkillID, DomainSkillName: session.DomainSkillName, InterviewerSkillID: session.InterviewerSkillID, InterviewerName: session.InterviewerName, InterviewerOpening: session.InterviewerOpening, IncludeFoundation: session.IncludeFoundation, Status: session.Status, Current: session.Current, Total: len(session.Questions), FollowUpRound: session.FollowUpRound, FollowUpTotal: session.FollowUpTotal, StartedAt: session.StartedAt}
 	if session.Status == "active" && session.Current < len(session.Questions) {
-		q := session.Questions[session.Current].Public()
+		question := session.Questions[session.Current]
+		q := question.Public()
+		q.FollowUpTotal = session.FollowUpTotal
+		if session.FollowUpRound > 0 {
+			q = followUpPublic(question, session.CurrentPrompt, session.FollowUpRound, session.FollowUpTotal)
+		}
 		result.CurrentQuestion = &q
 	}
 	return result
+}
+
+func followUpPublic(question domain.Question, prompt string, round, total int) domain.PublicQuestion {
+	return domain.PublicQuestion{ID: question.ID, PromptID: fmt.Sprintf("%s-followup-%d", question.ID, round), Language: question.Language, Difficulty: question.Difficulty, Prompt: prompt, Tags: question.Tags, FollowUp: true, Round: round, FollowUpTotal: total}
+}
+
+func currentAnswers(session *domain.Session) []string {
+	if session.FollowUpRound == 0 || len(session.Answers) == 0 {
+		return nil
+	}
+	record := session.Answers[len(session.Answers)-1]
+	if session.Current >= len(session.Questions) || record.Question.ID != session.Questions[session.Current].ID {
+		return nil
+	}
+	answers := []string{record.Answer}
+	for _, followUp := range record.FollowUps {
+		answers = append(answers, followUp.Answer)
+	}
+	return answers
+}
+
+func fallbackFollowUp(question domain.Question, answers []string, round, total int, interviewerSkillID string) string {
+	combined := strings.ToLower(strings.Join(answers, " "))
+	missingPoints := make([]string, 0)
+	for _, group := range question.KeyPoints {
+		found := false
+		for _, term := range strings.Split(group, "/") {
+			if term = strings.TrimSpace(strings.ToLower(term)); term != "" && strings.Contains(combined, term) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingPoints = append(missingPoints, strings.Split(group, "/")[0])
+		}
+	}
+	missing := ""
+	if len(missingPoints) > 0 {
+		missing = missingPoints[min(round-1, len(missingPoints)-1)]
+	}
+	if missing != "" {
+		switch interviewerSkillID {
+		case "atlas-architect":
+			if round == 1 {
+				return fmt.Sprintf("追问 %d/%d：如果把「%s」放进真实系统，你会如何定义约束和容量？", round, total, missing)
+			}
+			if round == 2 {
+				return fmt.Sprintf("追问 %d/%d：围绕「%s」，最可能的失败模式是什么？你会怎样降级？", round, total, missing)
+			}
+			return fmt.Sprintf("追问 %d/%d：针对「%s」的方案，你会怎样验证效果，并说明最终取舍？", round, total, missing)
+		case "vera-challenger":
+			if round == 1 {
+				return fmt.Sprintf("追问 %d/%d：你还没有说明「%s」的准确机制，请直接补充。", round, total, missing)
+			}
+			if round == 2 {
+				return fmt.Sprintf("追问 %d/%d：给我一个「%s」容易被误用的反例，以及后果。", round, total, missing)
+			}
+			return fmt.Sprintf("追问 %d/%d：线上因「%s」出现故障时，你先看什么证据，如何止损？", round, total, missing)
+		case "socrates-guide":
+			if round == 1 {
+				return fmt.Sprintf("追问 %d/%d：你认为「%s」与刚才的结论是什么关系？沿着假设推导一下。", round, total, missing)
+			}
+			return fmt.Sprintf("追问 %d/%d：如果「%s」的前提不成立，你会怎样修正刚才的答案？", round, total, missing)
+		default:
+			if round == 1 {
+				return fmt.Sprintf("追问 %d/%d：能进一步解释「%s」的原理吗？", round, total, missing)
+			}
+			return fmt.Sprintf("追问 %d/%d：请结合一个实际场景说明「%s」如何落地，以及要注意什么。", round, total, missing)
+		}
+	}
+	switch round {
+	case 1:
+		return fmt.Sprintf("追问 %d/%d：如果条件发生变化，你刚才的结论在哪些边界下不再成立？", round, total)
+	case 2:
+		return fmt.Sprintf("追问 %d/%d：请用一个真实项目或故障案例说明你会怎样应用这个判断。", round, total)
+	default:
+		return fmt.Sprintf("追问 %d/%d：如果让你重新设计一次，你会做出什么取舍，如何验证结果？", round, total)
+	}
+}
+
+func answerAverage(record domain.AnswerRecord) int {
+	total := record.Evaluation.Score
+	for _, followUp := range record.FollowUps {
+		total += followUp.Evaluation.Score
+	}
+	return total / (len(record.FollowUps) + 1)
 }
 
 func localEvaluate(question domain.Question, answer string, modelErr error, interviewerSkillID string) domain.Evaluation {
@@ -315,6 +482,61 @@ func localEvaluate(question domain.Question, answer string, modelErr error, inte
 	return domain.Evaluation{Score: score, Summary: summary, Strengths: strengths, Improvements: improvements, Source: "local"}
 }
 
+func localFollowUpEvaluate(answer string, modelErr error, interviewerSkillID string) domain.Evaluation {
+	lower := strings.ToLower(answer)
+	signalGroups := []struct {
+		name  string
+		terms []string
+	}{
+		{"原理机制", []string{"因为", "原理", "机制", "runtime", "gmp", "内存", "调度", "线程", "进程"}},
+		{"边界取舍", []string{"边界", "取舍", "限制", "容量", "失败", "风险", "反例", "前提"}},
+		{"实践验证", []string{"项目", "线上", "压测", "监控", "指标", "验证", "故障", "p99", "pprof"}},
+		{"解决方案", []string{"通过", "使用", "设计", "降级", "限流", "取消", "队列", "发布"}},
+	}
+	covered := make([]string, 0)
+	missing := make([]string, 0)
+	for _, group := range signalGroups {
+		found := false
+		for _, term := range group.terms {
+			if strings.Contains(lower, term) {
+				found = true
+				break
+			}
+		}
+		if found {
+			covered = append(covered, group.name)
+		} else {
+			missing = append(missing, group.name)
+		}
+	}
+	score := 35 + len(covered)*15
+	if len([]rune(answer)) < 20 {
+		score = min(score, 35)
+	}
+	if score > 95 {
+		score = 95
+	}
+	strengths := []string{"正面回应了本轮追问"}
+	if len(covered) > 0 {
+		strengths = []string{"追问回答体现了：" + strings.Join(covered, "、")}
+	}
+	prefix := "还可补充："
+	if interviewerSkillID == "vera-challenger" {
+		prefix = "回答仍缺少："
+	} else if interviewerSkillID == "atlas-architect" {
+		prefix = "架构回答还应补齐："
+	}
+	improvements := []string{"补充一个具体边界或项目例子"}
+	if len(missing) > 0 {
+		improvements = []string{prefix + strings.Join(missing[:min(2, len(missing))], "、")}
+	}
+	summary := fmt.Sprintf("本地追问评分识别到 %d/%d 类深度信号。", len(covered), len(signalGroups))
+	if modelErr != nil && !errors.Is(modelErr, agent.ErrNotConfigured) {
+		summary += " 大模型暂不可用，已自动降级评分。"
+	}
+	return domain.Evaluation{Score: score, Summary: summary, Strengths: strengths, Improvements: improvements, Source: "local"}
+}
+
 func buildReport(session *domain.Session) domain.Report {
 	completed := time.Now()
 	if session.CompletedAt != nil {
@@ -323,9 +545,17 @@ func buildReport(session *domain.Session) domain.Report {
 	total := 0
 	var highlights, focus []string
 	for _, answer := range session.Answers {
-		total += answer.Evaluation.Score
+		score := answer.AverageScore
+		if score == 0 {
+			score = answerAverage(answer)
+		}
+		total += score
 		highlights = append(highlights, answer.Evaluation.Strengths...)
 		focus = append(focus, answer.Evaluation.Improvements...)
+		for _, followUp := range answer.FollowUps {
+			highlights = append(highlights, followUp.Evaluation.Strengths...)
+			focus = append(focus, followUp.Evaluation.Improvements...)
+		}
 	}
 	score := 0
 	if len(session.Answers) > 0 {

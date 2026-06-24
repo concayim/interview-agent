@@ -24,6 +24,7 @@ type Skill struct {
 	OpeningLine     string   `json:"openingLine,omitempty"`
 	EvaluationFocus []string `json:"evaluationFocus,omitempty"`
 	FeedbackTone    string   `json:"feedbackTone,omitempty"`
+	FollowUpRounds  int      `json:"followUpRounds,omitempty"`
 	Industry        string   `json:"industry,omitempty"`
 	IndustryName    string   `json:"industryName,omitempty"`
 	Domain          string   `json:"domain,omitempty"`

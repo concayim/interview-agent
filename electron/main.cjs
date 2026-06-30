@@ -113,6 +113,12 @@ function createWindow() {
       ],
     },
   })
+  window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(['media', 'microphone', 'camera', 'audioCapture', 'videoCapture', 'speechRecognition'].includes(permission))
+  })
+  window.webContents.session.setPermissionCheckHandler((_webContents, permission) => {
+    return ['media', 'microphone', 'camera', 'audioCapture', 'videoCapture', 'speechRecognition'].includes(permission)
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url)
     return { action: 'deny' }

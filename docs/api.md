@@ -211,6 +211,18 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 这类 `intent` 可能为 `hint | clarify | repeat | off_topic | smalltalk`，不会返回 `evaluation`。其中 `off_topic` 与 `smalltalk` 由大模型意图识别处理，用于理解与当前题不直接相关的输入，并把对话拉回面试。最后一题的正式回答响应中 `completed` 为 `true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
 
+### `POST /speech/transcriptions`
+
+`Content-Type: multipart/form-data`，字段名为 `audio`，可选字段 `language` 为 `zh` 或 `en`。该接口使用当前模型配置调用 OpenAI-compatible `/audio/transcriptions`，用于 Electron 不支持 Web Speech API 时的录音转写兜底。单段语音最大 12 MB。
+
+响应 `200`：
+
+```json
+{ "text": "转写后的回答文本" }
+```
+
+需要配置支持音频转写的模型；模型不可用或不支持音频时返回 `502`。
+
 ### `GET /interviews/{id}/report`
 
 仅完成后可访问；未完成返回 `409`。

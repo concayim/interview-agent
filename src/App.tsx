@@ -45,6 +45,7 @@ type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
 type IntentMessage = { id: string; role: 'candidate' | 'assistant'; text: string; intent: string }
 type Turn = { question: Question; answer: string; evaluation: Evaluation; sideMessages?: IntentMessage[] }
 type Toast = { type: 'success' | 'error'; message: string }
+type SpeechMode = 'idle' | 'recognizing' | 'recording' | 'transcribing'
 type SpeechRecognitionCtor = new () => SpeechRecognition
 
 interface SpeechRecognition extends EventTarget {
@@ -270,12 +271,14 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
   const [sideMessages, setSideMessages] = useState<IntentMessage[]>([])
   const [cameraStream, setCameraStream] = useState<MediaStream>()
   const [cameraError, setCameraError] = useState('')
-  const [listening, setListening] = useState(false)
+  const [speechMode, setSpeechMode] = useState<SpeechMode>('idle')
   const [questionStartedAt, setQuestionStartedAt] = useState(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
   useEffect(() => { const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)), 1000); return () => clearInterval(timer) }, [session.startedAt])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, sideMessages, session.currentQuestion, readyReport])
   useEffect(() => {
@@ -328,14 +331,21 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
   }
 
   const toggleSpeech = () => {
-    if (listening) {
+    if (speechMode === 'recognizing') {
       recognitionRef.current?.stop()
-      setListening(false)
+      setSpeechMode('idle')
+      return
+    }
+    if (speechMode === 'recording') {
+      mediaRecorderRef.current?.stop()
+      return
+    }
+    if (speechMode === 'transcribing') {
       return
     }
     const Recognition = (window as typeof window & { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition ?? (window as typeof window & { webkitSpeechRecognition?: SpeechRecognitionCtor }).webkitSpeechRecognition
     if (!Recognition) {
-      notify({ type: 'error', message: '当前浏览器不支持语音输入，可以继续键盘作答' })
+      startRecordingFallback()
       return
     }
     const recognition = new Recognition()
@@ -346,11 +356,40 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       const text = Array.from(event.results).map((result) => result[0].transcript).join('')
       setAnswer((previous) => [previous, text].filter(Boolean).join(previous ? '\n' : ''))
     }
-    recognition.onerror = () => { setListening(false); notify({ type: 'error', message: '语音识别中断，请再试一次' }) }
-    recognition.onend = () => setListening(false)
+    recognition.onerror = () => { setSpeechMode('idle'); startRecordingFallback() }
+    recognition.onend = () => setSpeechMode('idle')
     recognitionRef.current = recognition
-    setListening(true)
-    recognition.start()
+    setSpeechMode('recognizing')
+    try { recognition.start() } catch { setSpeechMode('idle'); startRecordingFallback() }
+  }
+
+  const startRecordingFallback = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : undefined })
+      audioChunksRef.current = []
+      recorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop())
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        if (!blob.size) { setSpeechMode('idle'); notify({ type: 'error', message: '没有录到声音，请再试一次' }); return }
+        setSpeechMode('transcribing')
+        try {
+          const result = await api.transcribeSpeech(blob, session.speechLanguage || 'zh-CN')
+          setAnswer((previous) => [previous, result.text].filter(Boolean).join(previous ? '\n' : ''))
+        } catch (error) {
+          notify({ type: 'error', message: error instanceof Error ? error.message : '语音转写失败，请检查模型是否支持音频转写' })
+        } finally {
+          setSpeechMode('idle')
+        }
+      }
+      mediaRecorderRef.current = recorder
+      setSpeechMode('recording')
+      recorder.start()
+    } catch (error) {
+      setSpeechMode('idle')
+      notify({ type: 'error', message: error instanceof Error ? `无法访问麦克风：${error.message}` : '无法访问麦克风' })
+    }
   }
 
   return (
@@ -383,7 +422,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         </aside>
       </div>
       {session.currentQuestion && (
-        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${listening ? 'active' : ''}`} onClick={toggleSpeech} type="button"><Mic size={16} />{listening ? '聆听中' : '语音'}</button><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
+        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${speechMode !== 'idle' ? 'active' : ''}`} onClick={toggleSpeech} type="button" disabled={speechMode === 'transcribing'}><Mic size={16} />{speechButtonText(speechMode)}</button><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
       )}
     </div>
   )
@@ -518,6 +557,7 @@ function resourceKindLabel(kind: string) { return ({ all: '全部类型', articl
 function resourceKindIcon(kind: string) { if (kind === 'video') return <PlayCircle size={13} />; if (kind === 'article') return <Newspaper size={13} />; return <BookOpen size={13} /> }
 function resourceDate(resource: LearningResource) { const date = resource.publishedAt ? new Date(resource.publishedAt) : undefined; return date && date.getFullYear() > 1900 ? date.toLocaleDateString('zh-CN') : resource.source }
 function intentLabel(intent: string) { return ({ hint: '提示', clarify: '换个说法', repeat: '重复题目', skip: '跳过', off_topic: '拉回题目', smalltalk: '闲聊回应', message: '继续对话' } as Record<string, string>)[intent] ?? '继续对话' }
+function speechButtonText(mode: SpeechMode) { return ({ idle: '语音', recognizing: '聆听中', recording: '停止录音', transcribing: '转写中' } as Record<SpeechMode, string>)[mode] }
 
 function SettingsDrawer({ open, value, onClose, onSaved, notify }: { open: boolean; value: ModelConfig; onClose: () => void; onSaved: (value: ModelConfig) => void; notify: (value: Toast) => void }) {
   const [apiKey, setApiKey] = useState('')

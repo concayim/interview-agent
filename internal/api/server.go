@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +28,7 @@ import (
 )
 
 const maxUploadSize = 10 << 20
+const maxSpeechUploadSize = 12 << 20
 
 type Server struct {
 	logger     *slog.Logger
@@ -54,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/config/model", s.getModelConfig)
 	mux.HandleFunc("PUT /api/v1/config/model", s.putModelConfig)
 	mux.HandleFunc("POST /api/v1/config/model/test", s.testModelConfig)
+	mux.HandleFunc("POST /api/v1/speech/transcriptions", s.transcribeSpeech)
 	mux.HandleFunc("GET /api/v1/skills", s.listSkills)
 	mux.HandleFunc("GET /api/v1/knowledge/bases", s.listKnowledgeBases)
 	mux.HandleFunc("GET /api/v1/knowledge/bases/{id}/qa", s.searchKnowledge)
@@ -227,6 +231,82 @@ func (s *Server) testModelConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "模型连接成功"})
+}
+
+func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config.Get()
+	if !cfg.Ready() {
+		writeError(w, http.StatusBadRequest, "请先配置并启用支持音频转写的模型")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpeechUploadSize+(1<<20))
+	if err := r.ParseMultipartForm(maxSpeechUploadSize); err != nil {
+		writeError(w, http.StatusBadRequest, "语音片段不能超过 12 MB")
+		return
+	}
+	file, header, err := r.FormFile("audio")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "请提供语音片段")
+		return
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filepath.Base(header.Filename))
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if _, err := io.Copy(part, io.LimitReader(file, maxSpeechUploadSize+1)); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	_ = writer.WriteField("model", cfg.Model)
+	if language := strings.TrimSpace(r.FormValue("language")); language != "" {
+		_ = writer.WriteField("language", language)
+	}
+	if err := writer.Close(); err != nil {
+		s.internalError(w, err)
+		return
+	}
+
+	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	ctx, cancel := contextWithTimeout(r, 30*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/audio/transcriptions", &body)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "语音转写失败："+err.Error())
+		return
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, "语音转写失败："+string(payload))
+		return
+	}
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(payload, &result); err != nil || strings.TrimSpace(result.Text) == "" {
+		writeError(w, http.StatusBadGateway, "语音转写响应无法解析")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"text": strings.TrimSpace(result.Text)})
 }
 
 func (s *Server) listSkills(w http.ResponseWriter, _ *http.Request) {

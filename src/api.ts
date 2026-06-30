@@ -31,6 +31,12 @@ export const api = {
     request<Session>('/interviews', { method: 'POST', body: JSON.stringify(input) }),
   answer: (sessionId: string, answer: string, elapsedSeconds: number) =>
     request<AnswerResult>(`/interviews/${sessionId}/answers`, { method: 'POST', body: JSON.stringify({ answer, elapsedSeconds }) }),
+  transcribeSpeech: (audio: Blob, language: string) => {
+    const body = new FormData()
+    body.append('audio', audio, `answer-${Date.now()}.webm`)
+    body.append('language', language.startsWith('en') ? 'en' : 'zh')
+    return request<{ text: string }>('/speech/transcriptions', { method: 'POST', body })
+  },
   report: (sessionId: string) => request<Report>(`/interviews/${sessionId}/report`),
   getModelConfig: () => request<ModelConfig>('/config/model'),
   saveModelConfig: (input: { apiKey: string; baseUrl: string; model: string; enabled: boolean; clearApiKey?: boolean }) =>

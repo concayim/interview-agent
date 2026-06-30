@@ -4,7 +4,7 @@
 
 本地地址：默认 `http://127.0.0.1:46831/api/v1`。Electron 启动时如果端口已被占用，会自动选择可用端口，并通过主进程运行时配置把实际地址与令牌注入前端。
 
-所有响应均为 UTF-8 JSON。除健康检查和 `OPTIONS` 外，Electron 模式下请求需要：
+所有响应均为 UTF-8 JSON。除健康检查、Skill 目录和 `OPTIONS` 外，Electron 模式下请求需要：
 
 ```http
 X-Interview-Agent-Token: <本次启动生成的随机令牌>
@@ -57,6 +57,8 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 ### `GET /skills`
 
 返回动态面试官 Skill、领域 Skill 和行业目录。Skill 的私有提示词不会返回给前端。
+
+该接口为公开只读接口，不要求 `X-Interview-Agent-Token`，用于保证准备页在运行时端口或令牌刷新后仍能稳定渲染 Skill 目录。
 
 ```json
 {

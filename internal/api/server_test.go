@@ -55,6 +55,13 @@ func TestHealthAndTokenProtection(t *testing.T) {
 		t.Fatalf("expected 401, got %d", unauthorizedResponse.Code)
 	}
 
+	publicSkills := httptest.NewRequest(http.MethodGet, "/api/v1/skills", nil)
+	publicSkillsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(publicSkillsResponse, publicSkills)
+	if publicSkillsResponse.Code != http.StatusOK {
+		t.Fatalf("expected public skills 200, got %d", publicSkillsResponse.Code)
+	}
+
 	authorized := httptest.NewRequest(http.MethodGet, "/api/v1/config/model", nil)
 	authorized.Header.Set("X-Interview-Agent-Token", "secret")
 	authorizedResponse := httptest.NewRecorder()

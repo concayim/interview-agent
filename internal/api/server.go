@@ -289,7 +289,7 @@ func (s *Server) selectLearningResource(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions || r.URL.Path == "/api/v1/health" || s.token == "" {
+		if r.Method == http.MethodOptions || isPublicPath(r.URL.Path) || s.token == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -300,6 +300,10 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isPublicPath(path string) bool {
+	return path == "/api/v1/health" || path == "/api/v1/skills"
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {

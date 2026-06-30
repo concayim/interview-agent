@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell } = require('electron')
 const { spawn } = require('node:child_process')
 const { randomBytes } = require('node:crypto')
 const net = require('node:net')
@@ -8,6 +8,14 @@ const DEFAULT_PORT = 46831
 const TOKEN = randomBytes(24).toString('hex')
 let port = DEFAULT_PORT
 let backend
+let runtimeConfig = {
+  apiBaseUrl: `http://127.0.0.1:${DEFAULT_PORT}/api/v1`,
+  apiToken: TOKEN,
+}
+
+ipcMain.on('interview-agent-runtime-config', (event) => {
+  event.returnValue = runtimeConfig
+})
 
 function checkPort(candidate) {
   return new Promise((resolve) => {
@@ -43,6 +51,7 @@ function backendCommand() {
 async function startBackend() {
   port = await findAvailablePort(DEFAULT_PORT)
   const apiBaseUrl = `http://127.0.0.1:${port}/api/v1`
+  runtimeConfig = { apiBaseUrl, apiToken: TOKEN }
   const target = backendCommand()
   process.env.INTERVIEW_AGENT_TOKEN = TOKEN
   process.env.INTERVIEW_AGENT_API_BASE_URL = apiBaseUrl
@@ -88,8 +97,8 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       additionalArguments: [
-        `--interview-agent-api-base-url=${process.env.INTERVIEW_AGENT_API_BASE_URL || `http://127.0.0.1:${port}/api/v1`}`,
-        `--interview-agent-token=${TOKEN}`,
+        `--interview-agent-api-base-url=${runtimeConfig.apiBaseUrl}`,
+        `--interview-agent-token=${runtimeConfig.apiToken}`,
       ],
     },
   })

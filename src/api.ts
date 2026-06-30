@@ -1,9 +1,15 @@
 import type { AnswerResult, Difficulty, KnowledgeBase, LearningResult, ModelConfig, QAItem, Report, Resume, Session, SkillCatalog } from './types'
 
-const baseUrl = window.interviewAgent?.apiBaseUrl ?? 'http://127.0.0.1:46831/api/v1'
-const token = window.interviewAgent?.apiToken ?? ''
+function runtimeConfig() {
+  const config = window.interviewAgent?.getRuntimeConfig?.() ?? window.interviewAgent
+  return {
+    baseUrl: (config?.apiBaseUrl || 'http://127.0.0.1:46831/api/v1').replace(/\/$/, ''),
+    token: config?.apiToken || '',
+  }
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { baseUrl, token } = runtimeConfig()
   const headers = new Headers(init.headers)
   if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('X-Interview-Agent-Token', token)

@@ -69,7 +69,8 @@ function App() {
   const [toast, setToast] = useState<Toast>()
 
   useEffect(() => {
-    Promise.all([api.getModelConfig(), api.skills()]).then(([config, skills]) => { setModelConfig(config); setCatalog(skills) }).catch((error) => setToast({ type: 'error', message: error.message }))
+    api.getModelConfig().then(setModelConfig).catch((error) => setToast({ type: 'error', message: error.message }))
+    api.skills().then(setCatalog).catch((error) => setToast({ type: 'error', message: `Skill 加载失败：${error.message}` }))
   }, [])
   useEffect(() => {
     if (!toast) return

@@ -82,7 +82,7 @@ function App() {
   const [session, setSession] = useState<Session>()
   const [report, setReport] = useState<Report>()
   const [turns, setTurns] = useState<Turn[]>([])
-  const [modelConfig, setModelConfig] = useState<ModelConfig>({ baseUrl: '', model: '', enabled: false, hasApiKey: false })
+  const [modelConfig, setModelConfig] = useState<ModelConfig>({ baseUrl: '', model: '', speechModel: '', enabled: false, hasApiKey: false })
   const [catalog, setCatalog] = useState<SkillCatalog>()
   const [toast, setToast] = useState<Toast>()
 
@@ -576,26 +576,27 @@ function SettingsDrawer({ open, value, onClose, onSaved, notify }: { open: boole
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState(value.baseUrl)
   const [model, setModel] = useState(value.model)
+  const [speechModel, setSpeechModel] = useState(value.speechModel)
   const [enabled, setEnabled] = useState(value.enabled)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  useEffect(() => { if (open) { setApiKey(''); setBaseUrl(value.baseUrl); setModel(value.model); setEnabled(value.enabled) } }, [open, value])
+  useEffect(() => { if (open) { setApiKey(''); setBaseUrl(value.baseUrl); setModel(value.model); setSpeechModel(value.speechModel); setEnabled(value.enabled) } }, [open, value])
   if (!open) return null
   const save = async () => {
     setSaving(true)
-    try { const next = await api.saveModelConfig({ apiKey, baseUrl, model, enabled }); onSaved(next); notify({ type: 'success', message: '模型配置已保存' }); onClose() }
+    try { const next = await api.saveModelConfig({ apiKey, baseUrl, model, speechModel, enabled }); onSaved(next); notify({ type: 'success', message: '模型配置已保存' }); onClose() }
     catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '保存失败' }) }
     finally { setSaving(false) }
   }
   const test = async () => {
     setTesting(true)
     try {
-      const next = await api.saveModelConfig({ apiKey, baseUrl, model, enabled: true }); onSaved(next)
+      const next = await api.saveModelConfig({ apiKey, baseUrl, model, speechModel, enabled: true }); onSaved(next)
       const result = await api.testModelConfig(); setEnabled(true); notify({ type: 'success', message: result.message })
     } catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '连接失败' }) }
     finally { setTesting(false) }
   }
-  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="settings-drawer"><header><div><span className="heading-icon violet"><Settings2 size={19} /></span><section><h2>大模型设置</h2><p>通过 Eino 接入 OpenAI-compatible API</p></section></div><button className="icon-button" onClick={onClose}><X size={19} /></button></header><div className="drawer-content"><div className="settings-callout"><ShieldCheck size={19} /><p><strong>凭据保存在本机</strong><br />API Key 以 0600 权限写入应用数据目录，不会进入项目代码或日志。</p></div><label className="setting-field"><span>API Key {value.hasApiKey && <em>已保存</em>}</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={value.hasApiKey ? '留空以继续使用已保存的 Key' : 'sk-...'} /></label><label className="setting-field"><span>Base URL <small>可留空使用默认地址</small></span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></label><label className="setting-field"><span>Model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="模型 ID" /></label><label className="toggle-row"><span><strong>启用 AI 深度点评</strong><small>不可用时会自动降级为本地评分</small></span><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><i /></label><div className="settings-note"><Bot size={16} /><p>模型只接收当前题目、标准答案和你的当前回答，用于生成更细致的评分建议。</p></div></div><footer><button className="secondary-action" onClick={test} disabled={testing || (!apiKey && !value.hasApiKey) || !model}>{testing ? <LoaderCircle className="spin" size={16} /> : <Zap size={16} />}测试连接</button><button className="primary-action compact" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}保存设置</button></footer></aside></div>
+  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="settings-drawer"><header><div><span className="heading-icon violet"><Settings2 size={19} /></span><section><h2>大模型设置</h2><p>通过 Eino 接入 OpenAI-compatible API</p></section></div><button className="icon-button" onClick={onClose}><X size={19} /></button></header><div className="drawer-content"><div className="settings-callout"><ShieldCheck size={19} /><p><strong>凭据保存在本机</strong><br />API Key 以 0600 权限写入应用数据目录，不会进入项目代码或日志。</p></div><label className="setting-field"><span>API Key {value.hasApiKey && <em>已保存</em>}</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={value.hasApiKey ? '留空以继续使用已保存的 Key' : 'sk-...'} /></label><label className="setting-field"><span>Base URL <small>可留空使用默认地址</small></span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></label><label className="setting-field"><span>Model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="对话 / 出题 / 点评模型 ID" /></label><label className="setting-field"><span>Speech Model <small>录音兜底</small></span><input value={speechModel} onChange={(event) => setSpeechModel(event.target.value)} placeholder="例如 whisper-1 或服务商转写模型" /></label><label className="toggle-row"><span><strong>启用 AI 深度点评</strong><small>不可用时会自动降级为本地评分</small></span><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><i /></label><div className="settings-note"><Bot size={16} /><p>Model 用于出题、意图理解和点评；Speech Model 仅用于浏览器语音识别不可用时的录音转写。</p></div></div><footer><button className="secondary-action" onClick={test} disabled={testing || (!apiKey && !value.hasApiKey) || !model}>{testing ? <LoaderCircle className="spin" size={16} /> : <Zap size={16} />}测试连接</button><button className="primary-action compact" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}保存设置</button></footer></aside></div>
 }
 
 function languageLabel(language: Language) { return languageOptions.find((option) => option.value === language)?.label ?? language }

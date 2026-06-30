@@ -192,6 +192,7 @@ func (s *Server) putModelConfig(w http.ResponseWriter, r *http.Request) {
 		APIKey      string `json:"apiKey"`
 		BaseURL     string `json:"baseUrl"`
 		Model       string `json:"model"`
+		SpeechModel string `json:"speechModel"`
 		Enabled     bool   `json:"enabled"`
 		ClearAPIKey bool   `json:"clearApiKey"`
 	}
@@ -202,6 +203,7 @@ func (s *Server) putModelConfig(w http.ResponseWriter, r *http.Request) {
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
+	input.SpeechModel = strings.TrimSpace(input.SpeechModel)
 	if input.BaseURL != "" {
 		parsed, err := url.Parse(input.BaseURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
@@ -215,7 +217,7 @@ func (s *Server) putModelConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "启用模型前请填写 API Key 和 Model")
 		return
 	}
-	next := config.ModelConfig{APIKey: input.APIKey, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, Enabled: input.Enabled}
+	next := config.ModelConfig{APIKey: input.APIKey, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, SpeechModel: input.SpeechModel, Enabled: input.Enabled}
 	if err := s.config.Save(next, !input.ClearAPIKey); err != nil {
 		s.internalError(w, err)
 		return
@@ -237,6 +239,11 @@ func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Get()
 	if !cfg.Ready() {
 		writeError(w, http.StatusBadRequest, "请先配置并启用支持音频转写的模型")
+		return
+	}
+	speechModel := strings.TrimSpace(cfg.SpeechModel)
+	if speechModel == "" {
+		writeError(w, http.StatusBadRequest, "请在模型设置里填写 Speech Model，例如 whisper-1 或服务商提供的音频转写模型")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxSpeechUploadSize+(1<<20))
@@ -262,7 +269,7 @@ func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, err)
 		return
 	}
-	_ = writer.WriteField("model", cfg.Model)
+	_ = writer.WriteField("model", speechModel)
 	if language := strings.TrimSpace(r.FormValue("language")); language != "" {
 		_ = writer.WriteField("language", language)
 	}
@@ -296,7 +303,7 @@ func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		writeError(w, http.StatusBadGateway, "语音转写失败："+string(payload))
+		writeError(w, http.StatusBadGateway, "语音转写失败："+extractProviderError(payload))
 		return
 	}
 	var result struct {
@@ -441,6 +448,36 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func extractProviderError(payload []byte) string {
+	var parsed struct {
+		Error   any    `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(payload, &parsed); err == nil {
+		switch value := parsed.Error.(type) {
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return value
+			}
+		case map[string]any:
+			if message, ok := value["message"].(string); ok && strings.TrimSpace(message) != "" {
+				return message
+			}
+		}
+		if strings.TrimSpace(parsed.Message) != "" {
+			return parsed.Message
+		}
+	}
+	text := strings.TrimSpace(string(payload))
+	if len([]rune(text)) > 300 {
+		return string([]rune(text)[:300])
+	}
+	if text == "" {
+		return "服务商没有返回错误详情"
+	}
+	return text
 }
 
 func contextWithTimeout(r *http.Request, duration time.Duration) (context.Context, context.CancelFunc) {

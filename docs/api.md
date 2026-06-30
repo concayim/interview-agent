@@ -213,7 +213,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 ### `POST /speech/transcriptions`
 
-`Content-Type: multipart/form-data`，字段名为 `audio`，可选字段 `language` 为 `zh` 或 `en`。该接口使用当前模型配置调用 OpenAI-compatible `/audio/transcriptions`，用于 Electron 不支持 Web Speech API 时的录音转写兜底。单段语音最大 12 MB。
+`Content-Type: multipart/form-data`，字段名为 `audio`，可选字段 `language` 为 `zh-CN` 或 `en-US`。该接口使用当前模型配置中的 `Base URL`、`API Key` 与 `Speech Model` 调用 OpenAI-compatible `/audio/transcriptions`，用于 Electron 不支持 Web Speech API 时的录音转写兜底。单段语音最大 12 MB。
 
 响应 `200`：
 
@@ -221,7 +221,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 { "text": "转写后的回答文本" }
 ```
 
-需要配置支持音频转写的模型；模型不可用或不支持音频时返回 `502`。
+需要在模型设置中填写 `Speech Model`；未填写时返回 `400`，上游模型不可用或不支持音频时返回 `502`，错误信息会优先提取服务商返回的 `error.message` 或 `message`。
 
 ### `GET /interviews/{id}/report`
 
@@ -269,6 +269,7 @@ API Key 永远不会返回。
 {
   "baseUrl": "https://api.example.com/v1",
   "model": "model-name",
+  "speechModel": "whisper-1",
   "enabled": true,
   "hasApiKey": true
 }
@@ -281,6 +282,7 @@ API Key 永远不会返回。
   "apiKey": "sk-...",
   "baseUrl": "https://api.example.com/v1",
   "model": "model-name",
+  "speechModel": "whisper-1",
   "enabled": true,
   "clearApiKey": false
 }
@@ -288,7 +290,8 @@ API Key 永远不会返回。
 
 - `apiKey` 留空且 `clearApiKey=false` 时保留已有 Key。
 - `clearApiKey=true` 时清除 Key。
-- 启用模型时必须已有或提供 API Key，并填写 Model。
+- 启用模型时必须已有或提供 API Key，并填写 `model`。
+- `speechModel` 仅用于 `/speech/transcriptions` 的录音兜底转写；不填写时不影响出题、意图识别和点评，但录音转写会返回配置提示。
 
 响应结构同 `GET`。
 

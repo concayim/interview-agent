@@ -85,6 +85,7 @@ export type AnswerResult = {
 export type ModelConfig = {
   baseUrl: string
   model: string
+  speechModel: string
   enabled: boolean
   hasApiKey: boolean
 }

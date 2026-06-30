@@ -9,10 +9,11 @@ import (
 )
 
 type ModelConfig struct {
-	APIKey  string `json:"apiKey"`
-	BaseURL string `json:"baseUrl"`
-	Model   string `json:"model"`
-	Enabled bool   `json:"enabled"`
+	APIKey      string `json:"apiKey"`
+	BaseURL     string `json:"baseUrl"`
+	Model       string `json:"model"`
+	SpeechModel string `json:"speechModel,omitempty"`
+	Enabled     bool   `json:"enabled"`
 }
 
 func (c ModelConfig) Ready() bool {
@@ -20,10 +21,11 @@ func (c ModelConfig) Ready() bool {
 }
 
 type PublicModelConfig struct {
-	BaseURL   string `json:"baseUrl"`
-	Model     string `json:"model"`
-	Enabled   bool   `json:"enabled"`
-	HasAPIKey bool   `json:"hasApiKey"`
+	BaseURL     string `json:"baseUrl"`
+	Model       string `json:"model"`
+	SpeechModel string `json:"speechModel"`
+	Enabled     bool   `json:"enabled"`
+	HasAPIKey   bool   `json:"hasApiKey"`
 }
 
 type Store struct {
@@ -58,7 +60,7 @@ func (s *Store) Get() ModelConfig {
 
 func (s *Store) Public() PublicModelConfig {
 	cfg := s.Get()
-	return PublicModelConfig{BaseURL: cfg.BaseURL, Model: cfg.Model, Enabled: cfg.Enabled, HasAPIKey: cfg.APIKey != ""}
+	return PublicModelConfig{BaseURL: cfg.BaseURL, Model: cfg.Model, SpeechModel: cfg.SpeechModel, Enabled: cfg.Enabled, HasAPIKey: cfg.APIKey != ""}
 }
 
 func (s *Store) Save(next ModelConfig, preserveAPIKey bool) error {

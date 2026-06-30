@@ -39,7 +39,7 @@ export const api = {
   },
   report: (sessionId: string) => request<Report>(`/interviews/${sessionId}/report`),
   getModelConfig: () => request<ModelConfig>('/config/model'),
-  saveModelConfig: (input: { apiKey: string; baseUrl: string; model: string; enabled: boolean; clearApiKey?: boolean }) =>
+  saveModelConfig: (input: { apiKey: string; baseUrl: string; model: string; speechModel: string; enabled: boolean; clearApiKey?: boolean }) =>
     request<ModelConfig>('/config/model', { method: 'PUT', body: JSON.stringify(input) }),
   testModelConfig: () => request<{ ok: boolean; message: string }>('/config/model/test', { method: 'POST', body: '{}' }),
   knowledgeBases: () => request<{ bases: KnowledgeBase[] }>('/knowledge/bases'),

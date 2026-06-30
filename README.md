@@ -12,7 +12,7 @@ Interview Copilot 是一个使用 Go + Eino + Electron 构建的桌面面试对�
 - 领域能力以 Manifest Skill 组织：当前包含计算机基础公共 Skill 与 Go、Java、Python、C++ 语言 Skill；新增行业只需增加 Manifest 和对应知识库。
 - 每道题都包含难度、标签、关键点和人工编写的标准答案。
 - 按简历关键词优先选择相关题目，支持基础、进阶、挑战和智能混合模式。
-- OpenAI-compatible 模型配置：`API Key`、`Base URL`、`Model`。
+- OpenAI-compatible 模型配置：`API Key`、`Base URL`、`Model`、`Speech Model`。
 - 使用 Eino ChatModel 进行题目生成、意图识别和答案评价；模型未配置或调用失败时自动降级为内置题库与本地关键点评分。
 - 面试计时、进度、连续对话、模型意图理解式追问/提示/偏题拉回/跳过、逐题即时反馈，以及最终综合分数和标准答案复盘。
 - 可选视频面试模式，支持摄像头预览和中文/英文语音输入；语音优先使用浏览器识别，不可用时回退到后端音频转写；服务端预留 ModelScope CAM++ 声纹模型适配边界。
@@ -61,11 +61,12 @@ npm test
 
 - `API Key`：模型服务的凭据；
 - `Base URL`：OpenAI-compatible API 地址，可留空使用 SDK 默认地址；
-- `Model`：模型 ID。
+- `Model`：用于出题、意图识别和点评的对话模型 ID；
+- `Speech Model`：用于录音兜底转写的音频模型 ID，例如 `whisper-1` 或服务商提供的转写模型。
 
 点击“测试连接”成功后，创建面试会优先通过模型生成本场题目，逐题交互会通过模型理解意图并评价答案。模型不可用不会中断面试，而是自动使用内置题库和本地规则评分。单次回答链路控制在 20 秒内，前端会显示“理解意图、生成反馈、更新进度”的处理流程。
 
-语音输入不会自动提交答案。浏览器识别路径会实时把临时识别结果写入回答框，用户可以修改后再发送；如果 Electron 环境不支持 Web Speech API，语音按钮会自动改用录音转写。此时模型配置中的 `Model` 需要填写支持 OpenAI-compatible `/audio/transcriptions` 的音频转写模型。
+语音输入不会自动提交答案。浏览器识别路径会实时把临时识别结果写入回答框，用户可以修改后再发送；如果 Electron 环境不支持 Web Speech API，语音按钮会自动改用录音转写。录音转写会调用当前 `Base URL` 下的 OpenAI-compatible `/audio/transcriptions`，并使用 `Speech Model` 字段；如果该字段为空或模型不支持音频，界面会显示可读错误。
 
 配置文件保存在 Electron `userData/data/model-config.json`，权限为 `0600`。它不会写入仓库或日志。生产环境若需要更高安全级别，建议将 API Key 迁移到系统 Keychain / Credential Manager。
 

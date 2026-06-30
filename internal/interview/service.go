@@ -30,6 +30,8 @@ type StartInput struct {
 	DomainSkillID      string `json:"domainSkillId"`
 	InterviewerSkillID string `json:"interviewerSkillId"`
 	IncludeFoundation  bool   `json:"includeFoundation"`
+	VideoEnabled       bool   `json:"videoEnabled"`
+	SpeechLanguage     string `json:"speechLanguage"`
 	Difficulty         string `json:"difficulty"`
 	QuestionCount      int    `json:"questionCount"`
 }
@@ -51,6 +53,9 @@ type SessionView struct {
 	InterviewerName    string                 `json:"interviewerName"`
 	InterviewerOpening string                 `json:"interviewerOpening"`
 	IncludeFoundation  bool                   `json:"includeFoundation"`
+	VideoEnabled       bool                   `json:"videoEnabled"`
+	SpeechLanguage     string                 `json:"speechLanguage"`
+	QuestionSource     string                 `json:"questionSource"`
 	Status             string                 `json:"status"`
 	Current            int                    `json:"current"`
 	Total              int                    `json:"total"`
@@ -112,6 +117,7 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 	input.DomainSkillID = strings.TrimSpace(input.DomainSkillID)
 	input.InterviewerSkillID = strings.TrimSpace(input.InterviewerSkillID)
 	input.Difficulty = strings.ToLower(strings.TrimSpace(input.Difficulty))
+	input.SpeechLanguage = normalizeSpeechLanguage(input.SpeechLanguage)
 	if input.CandidateName == "" {
 		input.CandidateName = "候选人"
 	}
@@ -151,7 +157,7 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 		}
 	}
 	s.mu.RUnlock()
-	selected, err := questions.SelectWithFoundation(input.Language, input.Difficulty, input.QuestionCount, keywords, input.IncludeFoundation)
+	selected, questionSource, err := s.selectQuestions(input, domainSkill, keywords)
 	if err != nil {
 		return SessionView{}, err
 	}
@@ -160,7 +166,7 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 			return SessionView{}, fmt.Errorf("记录出题 QA 失败: %w", err)
 		}
 	}
-	session := &domain.Session{ID: newID("session"), CandidateName: input.CandidateName, ResumeID: input.ResumeID, Language: input.Language, Difficulty: input.Difficulty, Industry: domainSkill.Industry, DomainSkillID: domainSkill.ID, DomainSkillName: domainSkill.Name, InterviewerSkillID: interviewerSkill.ID, InterviewerName: interviewerSkill.Name, InterviewerOpening: interviewerSkill.OpeningLine, InterviewerPrompt: interviewerSkill.Prompt, EvaluationFocus: interviewerSkill.EvaluationFocus, FeedbackTone: interviewerSkill.FeedbackTone, IncludeFoundation: input.IncludeFoundation, Status: "active", Questions: selected, StartedAt: time.Now()}
+	session := &domain.Session{ID: newID("session"), CandidateName: input.CandidateName, ResumeID: input.ResumeID, Language: input.Language, Difficulty: input.Difficulty, Industry: domainSkill.Industry, DomainSkillID: domainSkill.ID, DomainSkillName: domainSkill.Name, InterviewerSkillID: interviewerSkill.ID, InterviewerName: interviewerSkill.Name, InterviewerOpening: interviewerSkill.OpeningLine, InterviewerPrompt: interviewerSkill.Prompt, EvaluationFocus: interviewerSkill.EvaluationFocus, FeedbackTone: interviewerSkill.FeedbackTone, IncludeFoundation: input.IncludeFoundation, VideoEnabled: input.VideoEnabled, SpeechLanguage: input.SpeechLanguage, QuestionSource: questionSource, Status: "active", Questions: selected, StartedAt: time.Now()}
 	s.mu.Lock()
 	s.sessions[session.ID] = session
 	s.mu.Unlock()
@@ -270,8 +276,42 @@ func (s *Service) Report(id string) (domain.Report, error) {
 	return buildReport(session), nil
 }
 
+func (s *Service) selectQuestions(input StartInput, domainSkill skills.Skill, keywords []string) ([]domain.Question, string, error) {
+	if generator, ok := s.evaluator.(agent.QuestionGenerator); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 16*time.Second)
+		defer cancel()
+		generated, err := generator.GenerateQuestions(ctx, agent.QuestionGenerationInput{
+			Language:          input.Language,
+			Difficulty:        input.Difficulty,
+			QuestionCount:     input.QuestionCount,
+			CandidateKeywords: keywords,
+			DomainSkillName:   domainSkill.Name,
+			DomainPrompt:      domainSkill.Prompt,
+			Topics:            domainSkill.Topics,
+			IncludeFoundation: input.IncludeFoundation,
+		})
+		if err == nil && len(generated) > 0 {
+			return generated, "model", nil
+		}
+	}
+	selected, err := questions.SelectWithFoundation(input.Language, input.Difficulty, input.QuestionCount, keywords, input.IncludeFoundation)
+	return selected, "built-in", err
+}
+
+func normalizeSpeechLanguage(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "en", "en-us", "english":
+		return "en-US"
+	case "zh", "zh-cn", "chinese", "中文":
+		return "zh-CN"
+	default:
+		return "zh-CN"
+	}
+}
+
 func view(session *domain.Session) SessionView {
-	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Industry: session.Industry, DomainSkillID: session.DomainSkillID, DomainSkillName: session.DomainSkillName, InterviewerSkillID: session.InterviewerSkillID, InterviewerName: session.InterviewerName, InterviewerOpening: session.InterviewerOpening, IncludeFoundation: session.IncludeFoundation, Status: session.Status, Current: session.Current, Total: len(session.Questions), StartedAt: session.StartedAt}
+	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Industry: session.Industry, DomainSkillID: session.DomainSkillID, DomainSkillName: session.DomainSkillName, InterviewerSkillID: session.InterviewerSkillID, InterviewerName: session.InterviewerName, InterviewerOpening: session.InterviewerOpening, IncludeFoundation: session.IncludeFoundation, VideoEnabled: session.VideoEnabled, SpeechLanguage: session.SpeechLanguage, QuestionSource: session.QuestionSource, Status: session.Status, Current: session.Current, Total: len(session.Questions), StartedAt: session.StartedAt}
 	if session.Status == "active" && session.Current < len(session.Questions) {
 		q := session.Questions[session.Current].Public()
 		result.CurrentQuestion = &q

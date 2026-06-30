@@ -21,6 +21,7 @@ import {
   Lightbulb,
   LoaderCircle,
   MessageSquareText,
+  Mic,
   Newspaper,
   PlayCircle,
   RefreshCw,
@@ -32,6 +33,8 @@ import {
   LibraryBig,
   UploadCloud,
   UserRound,
+  Video,
+  VideoOff,
   X,
   Zap,
 } from 'lucide-react'
@@ -42,6 +45,20 @@ type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
 type IntentMessage = { id: string; role: 'candidate' | 'assistant'; text: string; intent: string }
 type Turn = { question: Question; answer: string; evaluation: Evaluation; sideMessages?: IntentMessage[] }
 type Toast = { type: 'success' | 'error'; message: string }
+type SpeechRecognitionCtor = new () => SpeechRecognition
+
+interface SpeechRecognition extends EventTarget {
+  lang: string
+  interimResults: boolean
+  continuous: boolean
+  start: () => void
+  stop: () => void
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  onerror: (() => void) | null
+  onend: (() => void) | null
+}
+
+type SpeechRecognitionEvent = { results: ArrayLike<{ 0: { transcript: string } }> }
 
 const languageOptions: { value: Language; label: string; short: string; caption: string; color: string }[] = [
   { value: 'golang', label: 'Golang', short: 'Go', caption: '并发 · Runtime · 工程化', color: '#6bd7e8' },
@@ -150,6 +167,8 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
   const [domainSkillId, setDomainSkillId] = useState('computer-golang')
   const [interviewerSkillId, setInterviewerSkillId] = useState('echo-coach')
   const [includeFoundation, setIncludeFoundation] = useState(true)
+  const [videoEnabled, setVideoEnabled] = useState(false)
+  const [speechLanguage, setSpeechLanguage] = useState('zh-CN')
   const [difficulty, setDifficulty] = useState<Difficulty>('mixed')
   const [questionCount, setQuestionCount] = useState(5)
   const [uploading, setUploading] = useState(false)
@@ -174,7 +193,7 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
 
   const start = async () => {
     setStarting(true)
-    try { onStart(await api.startInterview({ candidateName, resumeId: resume?.id, domainSkillId, interviewerSkillId, includeFoundation, difficulty, questionCount })) }
+    try { onStart(await api.startInterview({ candidateName, resumeId: resume?.id, domainSkillId, interviewerSkillId, includeFoundation, videoEnabled, speechLanguage, difficulty, questionCount })) }
     catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '面试创建失败' }) }
     finally { setStarting(false) }
   }
@@ -228,6 +247,8 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
           <label className="field-label">面试难度</label>
           <div className="difficulty-row">{difficultyOptions.map((option) => <button key={option.value} className={difficulty === option.value ? 'selected' : ''} onClick={() => setDifficulty(option.value)}><strong>{option.label}</strong><small>{option.caption}</small></button>)}</div>
           <label className="foundation-toggle"><input type="checkbox" checked={includeFoundation} onChange={(event) => setIncludeFoundation(event.target.checked)} /><span><LibraryBig size={16} /><strong>混入计算机基础公共库</strong><small>每场加入 1–2 道操作系统、网络、数据库或分布式基础题</small></span><i /></label>
+          <label className="foundation-toggle"><input type="checkbox" checked={videoEnabled} onChange={(event) => setVideoEnabled(event.target.checked)} /><span>{videoEnabled ? <Video size={16} /> : <VideoOff size={16} />}<strong>开启视频面试</strong><small>进入面试后可选择摄像头；语音输入支持中文和英文</small></span><i /></label>
+          <div className="count-row"><span><Mic size={16} />语音语言</span><div>{[{ value: 'zh-CN', label: '中文' }, { value: 'en-US', label: 'English' }].map((option) => <button key={option.value} className={speechLanguage === option.value ? 'selected' : ''} onClick={() => setSpeechLanguage(option.value)}>{option.label}</button>)}</div></div>
           {difficulty === 'mixed' && <div className="count-row"><span><MessageSquareText size={16} />题目数量</span><div>{[3, 5, 6].map((count) => <button key={count} className={questionCount === count ? 'selected' : ''} onClick={() => setQuestionCount(count)}>{count} 题</button>)}</div></div>}
           <button className="primary-action" onClick={start} disabled={starting || !catalog}>{starting ? <LoaderCircle className="spin" size={19} /> : <Sparkles size={18} />}开始模拟面试<ArrowRight size={18} /></button>
           <div className="start-hint"><span><Clock3 size={14} />约 {questionCount * 3}–{questionCount * 5} 分钟</span><span><Bot size={14} />{modelReady ? 'AI 深度点评' : '本地关键点评分'}</span></div>
@@ -244,21 +265,43 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
 function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBack, notify }: { session: Session; turns: Turn[]; setTurns: Dispatch<SetStateAction<Turn[]>>; setSession: (value: Session) => void; onFinish: (report: Report) => void; onBack: () => void; notify: (value: Toast) => void }) {
   const [answer, setAnswer] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [submitStage, setSubmitStage] = useState('')
   const [readyReport, setReadyReport] = useState<Report>()
   const [sideMessages, setSideMessages] = useState<IntentMessage[]>([])
+  const [cameraStream, setCameraStream] = useState<MediaStream>()
+  const [cameraError, setCameraError] = useState('')
+  const [listening, setListening] = useState(false)
   const [questionStartedAt, setQuestionStartedAt] = useState(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   useEffect(() => { const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)), 1000); return () => clearInterval(timer) }, [session.startedAt])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, sideMessages, session.currentQuestion, readyReport])
+  useEffect(() => {
+    if (!session.videoEnabled) return
+    let active = true
+    let localStream: MediaStream | undefined
+    navigator.mediaDevices?.getUserMedia({ video: true, audio: true }).then((stream) => {
+      localStream = stream
+      if (!active) { stream.getTracks().forEach((track) => track.stop()); return }
+      setCameraStream(stream)
+      if (videoRef.current) videoRef.current.srcObject = stream
+    }).catch((error) => setCameraError(error instanceof Error ? error.message : '摄像头不可用'))
+    return () => { active = false; localStream?.getTracks().forEach((track) => track.stop()) }
+  }, [session.videoEnabled])
+  useEffect(() => { if (videoRef.current && cameraStream) videoRef.current.srcObject = cameraStream }, [cameraStream])
 
   const submit = async () => {
     const trimmed = answer.trim()
     if (!trimmed || submitting || !session.currentQuestion) return
     setSubmitting(true)
+    setSubmitStage('理解你的意图')
     try {
       const question = session.currentQuestion
+      window.setTimeout(() => setSubmitStage((stage) => stage ? '生成面试官反馈' : stage), 600)
       const result = await api.answer(session.id, trimmed, Math.floor((Date.now() - questionStartedAt) / 1000))
+      setSubmitStage(result.accepted ? '更新题目进度' : '组织追问回复')
       setAnswer('')
       if (!result.accepted) {
         setSideMessages((previous) => [
@@ -281,7 +324,33 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       }
     } catch (error) {
       notify({ type: 'error', message: error instanceof Error ? error.message : '回答提交失败，请重试' })
-    } finally { setSubmitting(false) }
+    } finally { setSubmitting(false); setSubmitStage('') }
+  }
+
+  const toggleSpeech = () => {
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
+    }
+    const Recognition = (window as typeof window & { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition ?? (window as typeof window & { webkitSpeechRecognition?: SpeechRecognitionCtor }).webkitSpeechRecognition
+    if (!Recognition) {
+      notify({ type: 'error', message: '当前浏览器不支持语音输入，可以继续键盘作答' })
+      return
+    }
+    const recognition = new Recognition()
+    recognition.lang = session.speechLanguage || 'zh-CN'
+    recognition.interimResults = false
+    recognition.continuous = false
+    recognition.onresult = (event) => {
+      const text = Array.from(event.results).map((result) => result[0].transcript).join('')
+      setAnswer((previous) => [previous, text].filter(Boolean).join(previous ? '\n' : ''))
+    }
+    recognition.onerror = () => { setListening(false); notify({ type: 'error', message: '语音识别中断，请再试一次' }) }
+    recognition.onend = () => setListening(false)
+    recognitionRef.current = recognition
+    setListening(true)
+    recognition.start()
   }
 
   return (
@@ -308,11 +377,13 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         </section>
         <aside className="interview-aside">
           <div className="aside-card"><span className="aside-label">回答结构</span><div className="answer-framework"><div><span>1</span><p><strong>先讲结论</strong><small>一句话回应核心问题</small></p></div><div><span>2</span><p><strong>拆解原理</strong><small>说清机制与边界</small></p></div><div><span>3</span><p><strong>联系实践</strong><small>用项目或反例收尾</small></p></div></div></div>
+          <div className="aside-card quiet"><BrainCircuit size={18} /><p>{session.questionSource === 'model' ? '本场题目由已配置模型动态生成。' : '模型题目生成不可用，本场已使用内置题库。'}</p></div>
+          {session.videoEnabled && <div className="video-card">{cameraStream ? <video ref={videoRef} autoPlay muted playsInline /> : <div><VideoOff size={21} /><p>{cameraError || '正在请求摄像头权限…'}</p></div>}<span>{session.speechLanguage === 'en-US' ? 'English interview' : '中文面试'} · CAM++ 声纹适配预留</span></div>}
           <div className="aside-card quiet"><Target size={18} /><p>不确定时可以明确假设，再沿着假设推理。面试官也在观察你的思考过程。</p></div>
         </aside>
       </div>
       {session.currentQuestion && (
-        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div>
+        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${listening ? 'active' : ''}`} onClick={toggleSpeech} type="button"><Mic size={16} />{listening ? '聆听中' : '语音'}</button><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
       )}
     </div>
   )

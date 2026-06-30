@@ -104,6 +104,8 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "domainSkillId": "computer-golang",
   "interviewerSkillId": "atlas-architect",
   "includeFoundation": true,
+  "videoEnabled": true,
+  "speechLanguage": "zh-CN",
   "difficulty": "mixed",
   "questionCount": 5
 }
@@ -114,8 +116,12 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 - `domainSkillId`: 当前为 `computer-golang | computer-java | computer-python | computer-cpp`
 - `interviewerSkillId`: `echo-coach | atlas-architect | vera-challenger | socrates-guide`
 - `includeFoundation`: 是否混入计算机基础公共库
+- `videoEnabled`: 是否开启视频面试
+- `speechLanguage`: 语音输入语言，支持 `zh-CN | en-US`
 - `difficulty`: `easy | medium | hard | mixed`
 - `questionCount`: `1..10`，若超过当前筛选结果则返回实际可用数量
+
+已配置模型时，服务端会优先按领域 Skill、难度、简历关键词和基础库偏好动态生成本场题目；生成失败时回退内置题库。
 
 响应 `201`：
 
@@ -132,6 +138,9 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "interviewerName": "Atlas · 架构面试官",
   "interviewerOpening": "我会追问设计背后的约束和取舍…",
   "includeFoundation": true,
+  "videoEnabled": true,
+  "speechLanguage": "zh-CN",
+  "questionSource": "model",
   "status": "active",
   "current": 0,
   "total": 5,
@@ -147,6 +156,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 ```
 
 注意：进行中的面试不会返回 `standardAnswer` 与 `keyPoints`。
+`questionSource` 为 `model` 或 `built-in`，用于标识本场题目来源。
 
 ### `GET /interviews/{id}`
 
@@ -184,6 +194,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 ```
 
 `accepted=true` 表示本次输入已被当作正式回答或跳过请求并推进题目。`intent` 可能为 `answer` 或 `skip`；跳过时会生成 `0` 分本地评价并进入下一题。
+回答链路服务端超时为 20 秒；模型意图识别、模型评价或本地评分会在该窗口内完成，模型不可用时自动降级。
 
 如果用户是在求提示、要求解释或重复题目，响应不会推进当前题：
 

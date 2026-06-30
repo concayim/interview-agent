@@ -36,6 +36,9 @@ export type Session = {
   interviewerName: string
   interviewerOpening: string
   includeFoundation: boolean
+  videoEnabled: boolean
+  speechLanguage: string
+  questionSource: 'model' | 'built-in' | string
   status: 'active' | 'completed'
   current: number
   total: number

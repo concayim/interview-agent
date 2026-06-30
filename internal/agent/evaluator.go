@@ -41,12 +41,27 @@ type IntentResult struct {
 	AssistantReply string
 }
 
+type QuestionGenerationInput struct {
+	Language          string
+	Difficulty        string
+	QuestionCount     int
+	CandidateKeywords []string
+	DomainSkillName   string
+	DomainPrompt      string
+	Topics            []string
+	IncludeFoundation bool
+}
+
 type Evaluator interface {
 	Evaluate(context.Context, EvaluationInput) (domain.Evaluation, error)
 }
 
 type IntentResolver interface {
 	ResolveIntent(context.Context, IntentInput) (IntentResult, error)
+}
+
+type QuestionGenerator interface {
+	GenerateQuestions(context.Context, QuestionGenerationInput) ([]domain.Question, error)
 }
 
 type EinoEvaluator struct{ config *config.Store }
@@ -66,7 +81,7 @@ func (e *EinoEvaluator) Evaluate(ctx context.Context, input EvaluationInput) (do
 		Model:               cfg.Model,
 		Temperature:         &temperature,
 		MaxCompletionTokens: &maxTokens,
-		HTTPClient:          &http.Client{Timeout: 45 * time.Second},
+		HTTPClient:          &http.Client{Timeout: 14 * time.Second},
 	})
 	if err != nil {
 		return domain.Evaluation{}, fmt.Errorf("创建 Eino ChatModel 失败: %w", err)
@@ -120,7 +135,7 @@ func (e *EinoEvaluator) ResolveIntent(ctx context.Context, input IntentInput) (I
 		Model:               cfg.Model,
 		Temperature:         &temperature,
 		MaxCompletionTokens: &maxTokens,
-		HTTPClient:          &http.Client{Timeout: 20 * time.Second},
+		HTTPClient:          &http.Client{Timeout: 8 * time.Second},
 	})
 	if err != nil {
 		return IntentResult{}, fmt.Errorf("创建 Eino ChatModel 失败: %w", err)
@@ -171,6 +186,97 @@ func (e *EinoEvaluator) ResolveIntent(ctx context.Context, input IntentInput) (I
 	return result, nil
 }
 
+func (e *EinoEvaluator) GenerateQuestions(ctx context.Context, input QuestionGenerationInput) ([]domain.Question, error) {
+	cfg := e.config.Get()
+	if !cfg.Ready() {
+		return nil, ErrNotConfigured
+	}
+	if input.QuestionCount < 1 {
+		input.QuestionCount = 5
+	}
+	if input.QuestionCount > 10 {
+		input.QuestionCount = 10
+	}
+	temperature := float32(0.55)
+	maxTokens := 1800
+	model, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+		APIKey:              cfg.APIKey,
+		BaseURL:             strings.TrimRight(cfg.BaseURL, "/"),
+		Model:               cfg.Model,
+		Temperature:         &temperature,
+		MaxCompletionTokens: &maxTokens,
+		HTTPClient:          &http.Client{Timeout: 14 * time.Second},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("创建 Eino ChatModel 失败: %w", err)
+	}
+	prompt := fmt.Sprintf(`你是 Interview Copilot 的面试出题 Agent。
+请为「%s」生成 %d 道技术面试题。只返回合法 JSON，不要使用 Markdown。结构必须是：
+{"questions":[{"difficulty":"easy|medium|hard","prompt":"题目","standardAnswer":"复盘用标准答案","keyPoints":["关键点1","关键点2"],"tags":["标签1","标签2"]}]}
+
+要求：
+- 题目语言/方向：%s。
+- 难度：%s；mixed 表示基础、进阶、挑战均衡。
+- 领域 Skill 指令：%s
+- 主题：%s
+- 候选人关键词：%s
+- 是否混入计算机基础公共题：%t
+- 每题必须可独立作答，避免重复，避免泄露“这是模型生成”的措辞。
+- standardAnswer 用于面试结束后的复盘，可以更完整；prompt 不要包含答案。
+- keyPoints 每题 4 到 7 个，支持中文或中英混写。
+- tags 每题 2 到 4 个。`, input.DomainSkillName, input.QuestionCount, input.Language, input.Difficulty, input.DomainPrompt, strings.Join(input.Topics, "、"), strings.Join(input.CandidateKeywords, "、"), input.IncludeFoundation)
+	response, err := model.Generate(ctx, []*schema.Message{
+		{Role: schema.System, Content: "你是 Interview Copilot 的出题 Agent，必须输出可解析 JSON。"},
+		{Role: schema.User, Content: prompt},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("调用大模型失败: %w", err)
+	}
+	var result struct {
+		Questions []struct {
+			Difficulty     string   `json:"difficulty"`
+			Prompt         string   `json:"prompt"`
+			StandardAnswer string   `json:"standardAnswer"`
+			KeyPoints      []string `json:"keyPoints"`
+			Tags           []string `json:"tags"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(stripCodeFence(response.Content)), &result); err != nil {
+		return nil, fmt.Errorf("解析模型题目失败: %w", err)
+	}
+	questions := make([]domain.Question, 0, len(result.Questions))
+	for index, item := range result.Questions {
+		prompt := strings.TrimSpace(item.Prompt)
+		standardAnswer := strings.TrimSpace(item.StandardAnswer)
+		if prompt == "" || standardAnswer == "" || len(item.KeyPoints) == 0 {
+			continue
+		}
+		difficulty := strings.TrimSpace(strings.ToLower(item.Difficulty))
+		if difficulty != "easy" && difficulty != "medium" && difficulty != "hard" {
+			difficulty = input.Difficulty
+			if difficulty == "" || difficulty == "mixed" {
+				difficulty = "medium"
+			}
+		}
+		questions = append(questions, domain.Question{
+			ID:             fmt.Sprintf("generated-%d-%d", time.Now().UnixNano(), index),
+			Language:       input.Language,
+			Difficulty:     difficulty,
+			Prompt:         prompt,
+			StandardAnswer: standardAnswer,
+			KeyPoints:      cleanStrings(item.KeyPoints, 7),
+			Tags:           cleanStrings(item.Tags, 4),
+		})
+	}
+	if len(questions) == 0 {
+		return nil, fmt.Errorf("模型没有生成可用题目")
+	}
+	if len(questions) > input.QuestionCount {
+		questions = questions[:input.QuestionCount]
+	}
+	return questions, nil
+}
+
 func (e *EinoEvaluator) Test(ctx context.Context) error {
 	cfg := e.config.Get()
 	if !cfg.Ready() {
@@ -198,4 +304,22 @@ func stripCodeFence(value string) string {
 		value = strings.TrimSuffix(value, "```")
 	}
 	return strings.TrimSpace(value)
+}
+
+func cleanStrings(values []string, limit int) []string {
+	result := make([]string, 0, min(len(values), limit))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if value == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, value)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result
 }

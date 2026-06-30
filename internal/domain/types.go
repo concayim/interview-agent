@@ -66,6 +66,9 @@ type Session struct {
 	EvaluationFocus    []string       `json:"-"`
 	FeedbackTone       string         `json:"-"`
 	IncludeFoundation  bool           `json:"includeFoundation"`
+	VideoEnabled       bool           `json:"videoEnabled"`
+	SpeechLanguage     string         `json:"speechLanguage"`
+	QuestionSource     string         `json:"questionSource"`
 	Status             string         `json:"status"`
 	Questions          []Question     `json:"-"`
 	Current            int            `json:"current"`

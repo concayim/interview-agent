@@ -87,6 +87,20 @@ func TestCandidateCanAskForHintWithoutAdvancing(t *testing.T) {
 	}
 }
 
+func TestStartUsesGeneratedQuestionsWhenAvailable(t *testing.T) {
+	service := NewService(generatingEvaluator{})
+	session, err := service.Start(StartInput{Language: "golang", Difficulty: "mixed", QuestionCount: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.QuestionSource != "model" {
+		t.Fatalf("expected model questions, got %s", session.QuestionSource)
+	}
+	if session.CurrentQuestion == nil || session.CurrentQuestion.ID != "generated-test-1" {
+		t.Fatalf("expected generated current question, got %#v", session.CurrentQuestion)
+	}
+}
+
 func TestCandidateCanSkipQuestion(t *testing.T) {
 	service := NewService(stubEvaluator{})
 	session, err := service.Start(StartInput{Language: "golang", Difficulty: "easy", QuestionCount: 2})
@@ -170,4 +184,17 @@ func (intentStubEvaluator) Evaluate(context.Context, agent.EvaluationInput) (dom
 
 func (e intentStubEvaluator) ResolveIntent(context.Context, agent.IntentInput) (agent.IntentResult, error) {
 	return e.result, nil
+}
+
+type generatingEvaluator struct{}
+
+func (generatingEvaluator) Evaluate(context.Context, agent.EvaluationInput) (domain.Evaluation, error) {
+	return domain.Evaluation{Score: 90, Summary: "测试评价", Strengths: []string{"结构清晰"}, Improvements: []string{"补充边界"}, Source: "llm"}, nil
+}
+
+func (generatingEvaluator) GenerateQuestions(context.Context, agent.QuestionGenerationInput) ([]domain.Question, error) {
+	return []domain.Question{
+		{ID: "generated-test-1", Language: "golang", Difficulty: "medium", Prompt: "模型生成题 1", StandardAnswer: "标准答案", KeyPoints: []string{"关键点"}, Tags: []string{"Go"}},
+		{ID: "generated-test-2", Language: "golang", Difficulty: "hard", Prompt: "模型生成题 2", StandardAnswer: "标准答案", KeyPoints: []string{"关键点"}, Tags: []string{"Go"}},
+	}, nil
 }

@@ -27,7 +27,7 @@ export const api = {
     return request<Resume>('/resumes', { method: 'POST', body })
   },
   skills: () => request<SkillCatalog>('/skills'),
-  startInterview: (input: { candidateName: string; resumeId?: string; domainSkillId: string; interviewerSkillId: string; includeFoundation: boolean; difficulty: Difficulty; questionCount: number }) =>
+  startInterview: (input: { candidateName: string; resumeId?: string; domainSkillId: string; interviewerSkillId: string; includeFoundation: boolean; videoEnabled: boolean; speechLanguage: string; difficulty: Difficulty; questionCount: number }) =>
     request<Session>('/interviews', { method: 'POST', body: JSON.stringify(input) }),
   answer: (sessionId: string, answer: string, elapsedSeconds: number) =>
     request<AnswerResult>(`/interviews/${sessionId}/answers`, { method: 'POST', body: JSON.stringify({ answer, elapsedSeconds }) }),

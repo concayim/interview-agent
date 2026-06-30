@@ -1,7 +1,9 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const { randomBytes } = require('node:crypto')
+const fs = require('node:fs')
 const net = require('node:net')
+const os = require('node:os')
 const path = require('node:path')
 
 const DEFAULT_PORT = 46831
@@ -42,7 +44,11 @@ async function findAvailablePort(preferred) {
 
 function backendCommand() {
   if (!app.isPackaged) {
-    return { command: 'go', args: ['run', './cmd/server', '-port', String(port)], cwd: path.join(__dirname, '..') }
+    const cwd = path.join(__dirname, '..')
+    const binary = path.join(os.tmpdir(), `interview-agent-server-dev-${process.pid}${process.platform === 'win32' ? '.exe' : ''}`)
+    const build = spawnSync('go', ['build', '-o', binary, './cmd/server'], { cwd, stdio: 'inherit' })
+    if (build.status !== 0) throw new Error('后端服务构建失败')
+    return { command: binary, args: ['-port', String(port)], cwd, cleanup: () => fs.rmSync(binary, { force: true }) }
   }
   const binary = process.platform === 'win32' ? 'interview-agent-server.exe' : 'interview-agent-server'
   return { command: path.join(process.resourcesPath, 'bin', binary), args: ['-port', String(port)], cwd: process.resourcesPath }
@@ -64,10 +70,15 @@ async function startBackend() {
       INTERVIEW_AGENT_DATA_DIR: path.join(app.getPath('userData'), 'data'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   })
+  backend.cleanup = target.cleanup
   backend.stdout.on('data', (chunk) => console.log(`[backend] ${chunk.toString().trimEnd()}`))
   backend.stderr.on('data', (chunk) => console.error(`[backend] ${chunk.toString().trimEnd()}`))
-  backend.on('exit', (code) => { if (code && !app.isQuitting) console.error(`Backend exited with code ${code}`) })
+  backend.on('exit', (code) => {
+    backend.cleanup?.()
+    if (code && !app.isQuitting) console.error(`Backend exited with code ${code}`)
+  })
 }
 
 async function waitForBackend() {
@@ -125,7 +136,10 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true
-  if (backend && !backend.killed) backend.kill('SIGTERM')
+  if (backend && !backend.killed) {
+    if (process.platform !== 'win32') process.kill(-backend.pid, 'SIGTERM')
+    else backend.kill('SIGTERM')
+  }
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

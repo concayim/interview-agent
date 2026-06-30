@@ -1,28 +1,57 @@
 const { app, BrowserWindow, shell } = require('electron')
 const { spawn } = require('node:child_process')
 const { randomBytes } = require('node:crypto')
+const net = require('node:net')
 const path = require('node:path')
 
-const PORT = 46831
+const DEFAULT_PORT = 46831
 const TOKEN = randomBytes(24).toString('hex')
+let port = DEFAULT_PORT
 let backend
+
+function checkPort(candidate) {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    server.once('error', () => resolve(false))
+    server.once('listening', () => server.close(() => resolve(true)))
+    server.listen(candidate, '127.0.0.1')
+  })
+}
+
+async function findAvailablePort(preferred) {
+  for (let candidate = preferred; candidate < preferred + 40; candidate += 1) {
+    if (await checkPort(candidate)) return candidate
+  }
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      server.close(() => resolve(address.port))
+    })
+  })
+}
 
 function backendCommand() {
   if (!app.isPackaged) {
-    return { command: 'go', args: ['run', './cmd/server', '-port', String(PORT)], cwd: path.join(__dirname, '..') }
+    return { command: 'go', args: ['run', './cmd/server', '-port', String(port)], cwd: path.join(__dirname, '..') }
   }
   const binary = process.platform === 'win32' ? 'interview-agent-server.exe' : 'interview-agent-server'
-  return { command: path.join(process.resourcesPath, 'bin', binary), args: ['-port', String(PORT)], cwd: process.resourcesPath }
+  return { command: path.join(process.resourcesPath, 'bin', binary), args: ['-port', String(port)], cwd: process.resourcesPath }
 }
 
-function startBackend() {
+async function startBackend() {
+  port = await findAvailablePort(DEFAULT_PORT)
+  const apiBaseUrl = `http://127.0.0.1:${port}/api/v1`
   const target = backendCommand()
   process.env.INTERVIEW_AGENT_TOKEN = TOKEN
+  process.env.INTERVIEW_AGENT_API_BASE_URL = apiBaseUrl
   backend = spawn(target.command, target.args, {
     cwd: target.cwd,
     env: {
       ...process.env,
       INTERVIEW_AGENT_TOKEN: TOKEN,
+      INTERVIEW_AGENT_API_BASE_URL: apiBaseUrl,
       INTERVIEW_AGENT_DATA_DIR: path.join(app.getPath('userData'), 'data'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -36,7 +65,7 @@ async function waitForBackend() {
   const deadline = Date.now() + 30000
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`http://127.0.0.1:${PORT}/api/v1/health`)
+      const response = await fetch(`http://127.0.0.1:${port}/api/v1/health`)
       if (response.ok) return
     } catch { /* backend is still starting */ }
     await new Promise((resolve) => setTimeout(resolve, 250))
@@ -58,6 +87,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      additionalArguments: [
+        `--interview-agent-api-base-url=${process.env.INTERVIEW_AGENT_API_BASE_URL || `http://127.0.0.1:${port}/api/v1`}`,
+        `--interview-agent-token=${TOKEN}`,
+      ],
     },
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -70,8 +103,8 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  startBackend()
   try {
+    await startBackend()
     await waitForBackend()
     createWindow()
   } catch (error) {

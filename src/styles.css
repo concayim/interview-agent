@@ -207,6 +207,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .answer-bubble { max-width: 610px; padding: 13px 15px; border-radius: 14px 4px 14px 14px; background: linear-gradient(135deg, rgba(93, 197, 166, .16), rgba(71, 135, 129, .12)); border: 1px solid rgba(110, 231, 194, .13); }
 .answer-bubble p { margin: 0; color: #cad7d5; font-size: 10px; line-height: 1.7; white-space: pre-wrap; }
 .user-avatar { width: 30px; height: 30px; display: grid; place-items: center; color: #9ba9ba; border-radius: 9px; background: rgba(255,255,255,.06); }
+.intent-message { margin-top: -5px; margin-bottom: 8px; }
+.intent-message .answer-bubble { max-width: 520px; background: rgba(255,255,255,.035); border-color: rgba(255,255,255,.07); }
+.intent-reply { margin: 5px 0 14px; }
+.intent-reply .message-avatar { color: var(--violet); border-color: rgba(169,149,255,.18); background: rgba(169,149,255,.08); }
+.intent-reply .message-content { max-width: 620px; background: rgba(19, 29, 46, .78); }
+.intent-reply .message-content > p { color: #c7d1dd; font-size: 10px; }
+.intent-message.archived, .intent-reply.archived { opacity: .74; }
 .inline-evaluation { position: relative; width: calc(100% - 84px); display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 9px 11px; margin: 10px 42px 0 auto; text-align: left; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.018); cursor: pointer; }
 .score-dot { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; font-size: 9px; font-weight: 750; }
 .score-dot.score-great { color: var(--mint); background: rgba(110,231,194,.1); }

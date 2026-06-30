@@ -39,7 +39,8 @@ import { api } from './api'
 import type { Difficulty, Evaluation, KnowledgeBase, Language, LearningResource, ModelConfig, QAItem, Question, Report, Resume, Session, SkillCatalog } from './types'
 
 type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
-type Turn = { question: Question; answer: string; evaluation: Evaluation }
+type IntentMessage = { id: string; role: 'candidate' | 'assistant'; text: string; intent: string }
+type Turn = { question: Question; answer: string; evaluation: Evaluation; sideMessages?: IntentMessage[] }
 type Toast = { type: 'success' | 'error'; message: string }
 
 const languageOptions: { value: Language; label: string; short: string; caption: string; color: string }[] = [
@@ -243,11 +244,12 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
   const [answer, setAnswer] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [readyReport, setReadyReport] = useState<Report>()
+  const [sideMessages, setSideMessages] = useState<IntentMessage[]>([])
   const [questionStartedAt, setQuestionStartedAt] = useState(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => { const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)), 1000); return () => clearInterval(timer) }, [session.startedAt])
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, session.currentQuestion, readyReport])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, sideMessages, session.currentQuestion, readyReport])
 
   const submit = async () => {
     const trimmed = answer.trim()
@@ -256,8 +258,19 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     try {
       const question = session.currentQuestion
       const result = await api.answer(session.id, trimmed, Math.floor((Date.now() - questionStartedAt) / 1000))
-      setTurns((previous) => [...previous, { question, answer: trimmed, evaluation: result.evaluation }])
       setAnswer('')
+      if (!result.accepted) {
+        setSideMessages((previous) => [
+          ...previous,
+          { id: crypto.randomUUID(), role: 'candidate', text: trimmed, intent: result.intent || 'message' },
+          ...(result.assistantReply ? [{ id: crypto.randomUUID(), role: 'assistant' as const, text: result.assistantReply, intent: result.intent || 'message' }] : []),
+        ])
+        return
+      }
+      const evaluation = result.evaluation
+      if (!evaluation) throw new Error('本次回复缺少评价结果')
+      setTurns((previous) => [...previous, { question, answer: trimmed, evaluation, sideMessages }])
+      setSideMessages([])
       if (result.completed && result.report) {
         setReadyReport(result.report)
         setSession({ ...session, current: result.current, status: 'completed', currentQuestion: undefined })
@@ -288,6 +301,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
               <div className="message-content"><div className="message-meta"><strong>{session.interviewerName}</strong><span>第 {session.current + 1} 题</span></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
             </div>
           )}
+          {sideMessages.map((message) => <IntentBubble key={message.id} message={message} interviewerName={session.interviewerName} />)}
           {readyReport && <div className="completion-card"><span><Sparkles size={26} /></span><h2>这场面试完成了</h2><p>你认真回答了 {readyReport.answered} 道题。标准答案、逐题评分和下一步练习建议都已经整理好。</p><button className="primary-action compact" onClick={() => onFinish(readyReport)}>查看我的复盘<ArrowRight size={18} /></button></div>}
           <div ref={bottomRef} />
         </section>
@@ -297,7 +311,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         </aside>
       </div>
       {session.currentQuestion && (
-        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="说说你的思路… 可以先写结论，再补充细节" /><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '正在点评' : '提交回答'}</button></div></div></div>
+        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div>
       )}
     </div>
   )
@@ -308,12 +322,20 @@ function TurnCard({ turn, index, interviewerName }: { turn: Turn; index: number;
   return (
     <div className="turn-block">
       <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className="message-content"><div className="message-meta"><strong>{interviewerName}</strong><span>第 {index} 题</span></div><p>{turn.question.prompt}</p></div></div>
+      {turn.sideMessages?.map((message) => <IntentBubble key={message.id} message={message} interviewerName={interviewerName} archived />)}
       <div className="answer-message"><div className="answer-bubble"><p>{turn.answer}</p></div><div className="user-avatar"><UserRound size={17} /></div></div>
       <button className={`inline-evaluation ${open ? 'open' : ''}`} onClick={() => setOpen(!open)}><span className={`score-dot score-${scoreBand(turn.evaluation.score)}`}>{turn.evaluation.score}</span><span><strong>{turn.evaluation.summary}</strong><small>{turn.evaluation.source === 'llm' ? 'Eino AI 点评' : '本地关键点评分'} · 点击{open ? '收起' : '展开'}</small></span><ChevronDown size={18} />
         {open && <div className="evaluation-details"><div><Check size={15} /><p>{turn.evaluation.strengths.join('；')}</p></div><div><Zap size={15} /><p>{turn.evaluation.improvements.join('；')}</p></div></div>}
       </button>
     </div>
   )
+}
+
+function IntentBubble({ message, interviewerName, archived = false }: { message: IntentMessage; interviewerName: string; archived?: boolean }) {
+  if (message.role === 'candidate') {
+    return <div className={`answer-message intent-message ${archived ? 'archived' : ''}`}><div className="answer-bubble"><p>{message.text}</p></div><div className="user-avatar"><UserRound size={17} /></div></div>
+  }
+  return <div className={`question-message intent-reply ${archived ? 'archived' : ''}`}><div className="message-avatar"><MessageSquareText size={17} /></div><div className="message-content"><div className="message-meta"><strong>{interviewerName}</strong><span>{intentLabel(message.intent)}</span></div><p>{message.text}</p></div></div>
 }
 
 function ReviewScreen({ report, onRestart }: { report: Report; onRestart: () => void }) {
@@ -423,6 +445,7 @@ function SearchIcon() { return <Target size={16} /> }
 function resourceKindLabel(kind: string) { return ({ all: '全部类型', article: '文章', video: '视频', course: '课程', docs: '文档' } as Record<string, string>)[kind] ?? kind }
 function resourceKindIcon(kind: string) { if (kind === 'video') return <PlayCircle size={13} />; if (kind === 'article') return <Newspaper size={13} />; return <BookOpen size={13} /> }
 function resourceDate(resource: LearningResource) { const date = resource.publishedAt ? new Date(resource.publishedAt) : undefined; return date && date.getFullYear() > 1900 ? date.toLocaleDateString('zh-CN') : resource.source }
+function intentLabel(intent: string) { return ({ hint: '提示', clarify: '换个说法', repeat: '重复题目', skip: '跳过', off_topic: '拉回题目', smalltalk: '闲聊回应', message: '继续对话' } as Record<string, string>)[intent] ?? '继续对话' }
 
 function SettingsDrawer({ open, value, onClose, onSaved, notify }: { open: boolean; value: ModelConfig; onClose: () => void; onSaved: (value: ModelConfig) => void; notify: (value: Toast) => void }) {
   const [apiKey, setApiKey] = useState('')

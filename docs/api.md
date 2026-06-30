@@ -165,6 +165,8 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 ```json
 {
+  "accepted": true,
+  "intent": "answer",
   "evaluation": {
     "score": 82,
     "summary": "核心机制基本正确。",
@@ -179,7 +181,22 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 }
 ```
 
-最后一题的响应中 `completed` 为 `true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
+`accepted=true` 表示本次输入已被当作正式回答或跳过请求并推进题目。`intent` 可能为 `answer` 或 `skip`；跳过时会生成 `0` 分本地评价并进入下一题。
+
+如果用户是在求提示、要求解释或重复题目，响应不会推进当前题：
+
+```json
+{
+  "accepted": false,
+  "intent": "hint",
+  "assistantReply": "可以按这个顺序组织：先定义…",
+  "completed": false,
+  "current": 0,
+  "total": 5
+}
+```
+
+这类 `intent` 可能为 `hint | clarify | repeat | off_topic | smalltalk`，不会返回 `evaluation`。其中 `off_topic` 与 `smalltalk` 由大模型意图识别处理，用于理解与当前题不直接相关的输入，并把对话拉回面试。最后一题的正式回答响应中 `completed` 为 `true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
 
 ### `GET /interviews/{id}/report`
 

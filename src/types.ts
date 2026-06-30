@@ -68,12 +68,15 @@ export type Report = {
 }
 
 export type AnswerResult = {
-  evaluation: Evaluation
+  evaluation?: Evaluation
   completed: boolean
   nextQuestion?: Question
   current: number
   total: number
   report?: Report
+  accepted: boolean
+  intent: 'answer' | 'hint' | 'clarify' | 'repeat' | 'skip' | 'off_topic' | 'smalltalk' | string
+  assistantReply?: string
 }
 
 export type ModelConfig = {

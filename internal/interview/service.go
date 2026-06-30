@@ -59,12 +59,15 @@ type SessionView struct {
 }
 
 type AnswerResult struct {
-	Evaluation   domain.Evaluation      `json:"evaluation"`
-	Completed    bool                   `json:"completed"`
-	NextQuestion *domain.PublicQuestion `json:"nextQuestion,omitempty"`
-	Current      int                    `json:"current"`
-	Total        int                    `json:"total"`
-	Report       *domain.Report         `json:"report,omitempty"`
+	Evaluation     *domain.Evaluation     `json:"evaluation,omitempty"`
+	Completed      bool                   `json:"completed"`
+	NextQuestion   *domain.PublicQuestion `json:"nextQuestion,omitempty"`
+	Current        int                    `json:"current"`
+	Total          int                    `json:"total"`
+	Report         *domain.Report         `json:"report,omitempty"`
+	Accepted       bool                   `json:"accepted"`
+	Intent         string                 `json:"intent"`
+	AssistantReply string                 `json:"assistantReply,omitempty"`
 }
 
 type Service struct {
@@ -200,11 +203,28 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 		return AnswerResult{}, ErrCompleted
 	}
 	question := session.Questions[session.Current]
+	current := session.Current
+	total := len(session.Questions)
+	interviewerName := session.InterviewerName
+	interviewerPrompt := session.InterviewerPrompt
+	evaluationFocus := append([]string(nil), session.EvaluationFocus...)
+	feedbackTone := session.FeedbackTone
+	interviewerSkillID := session.InterviewerSkillID
 	s.mu.RUnlock()
 
-	evaluation, err := s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: question, CandidateAnswer: input.Answer, InterviewerName: session.InterviewerName, InterviewerPrompt: session.InterviewerPrompt, EvaluationFocus: session.EvaluationFocus, FeedbackTone: session.FeedbackTone})
-	if err != nil {
-		evaluation = localEvaluate(question, input.Answer, err, session.InterviewerSkillID)
+	intentResult := s.resolveCandidateIntent(ctx, agent.IntentInput{Question: question, CandidateMessage: input.Answer, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, FeedbackTone: feedbackTone})
+	if !intentResult.Accepted {
+		return AnswerResult{Accepted: false, Intent: intentResult.Intent, AssistantReply: intentResult.AssistantReply, Current: current, Total: total}, nil
+	}
+	var evaluation domain.Evaluation
+	if intentResult.Intent == "skip" {
+		evaluation = skippedEvaluation()
+	} else {
+		var err error
+		evaluation, err = s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: question, CandidateAnswer: input.Answer, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, EvaluationFocus: evaluationFocus, FeedbackTone: feedbackTone})
+		if err != nil {
+			evaluation = localEvaluate(question, input.Answer, err, interviewerSkillID)
+		}
 	}
 
 	s.mu.Lock()
@@ -222,7 +242,7 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 	}
 	session.Answers = append(session.Answers, domain.AnswerRecord{Question: question, Answer: input.Answer, ElapsedSeconds: input.ElapsedSeconds, Evaluation: evaluation})
 	session.Current++
-	result := AnswerResult{Evaluation: evaluation, Current: session.Current, Total: len(session.Questions)}
+	result := AnswerResult{Evaluation: &evaluation, Accepted: true, Intent: intentResult.Intent, Current: session.Current, Total: len(session.Questions)}
 	if session.Current >= len(session.Questions) {
 		now := time.Now()
 		session.Status = "completed"
@@ -257,6 +277,95 @@ func view(session *domain.Session) SessionView {
 		result.CurrentQuestion = &q
 	}
 	return result
+}
+
+func (s *Service) resolveCandidateIntent(ctx context.Context, input agent.IntentInput) agent.IntentResult {
+	if result, handled := detectLocalCandidateIntent(input.CandidateMessage, input.Question); handled {
+		return result
+	}
+	if resolver, ok := s.evaluator.(agent.IntentResolver); ok {
+		if result, err := resolver.ResolveIntent(ctx, input); err == nil {
+			return normalizeIntentResult(result)
+		}
+	}
+	return agent.IntentResult{Intent: "answer", Accepted: true}
+}
+
+func normalizeIntentResult(result agent.IntentResult) agent.IntentResult {
+	result.Intent = strings.TrimSpace(strings.ToLower(result.Intent))
+	switch result.Intent {
+	case "answer", "skip":
+		result.Accepted = true
+		result.AssistantReply = ""
+	case "hint", "clarify", "repeat", "off_topic", "smalltalk":
+		result.Accepted = false
+	default:
+		result.Intent = "answer"
+		result.Accepted = true
+		result.AssistantReply = ""
+	}
+	if !result.Accepted && strings.TrimSpace(result.AssistantReply) == "" {
+		result.AssistantReply = "我理解你的意思。我们先回到当前题，你可以从一句结论开始，后面再补充原因和边界。"
+	}
+	return result
+}
+
+func detectLocalCandidateIntent(answer string, question domain.Question) (agent.IntentResult, bool) {
+	compact := strings.ToLower(strings.TrimSpace(answer))
+	if compact == "" {
+		return agent.IntentResult{}, false
+	}
+	if containsAny(compact, "跳过", "下一题", "不会答了", "放弃这题", "过吧", "pass", "skip") {
+		return agent.IntentResult{Intent: "skip", Accepted: true}, true
+	}
+	if len([]rune(compact)) > 80 {
+		return agent.IntentResult{}, false
+	}
+	if containsAny(compact, "重复", "再说一遍", "再发", "重新发", "上一题", "题目是什么") {
+		return agent.IntentResult{Intent: "repeat", Accepted: false, AssistantReply: fmt.Sprintf("当然。当前题目是：%s", question.Prompt)}, true
+	}
+	if containsAny(compact, "什么意思", "没懂", "看不懂", "解释一下", "换个说法", "换种说法", "展开一下", "题目意思") {
+		return agent.IntentResult{Intent: "clarify", Accepted: false, AssistantReply: clarifyQuestionReply(question)}, true
+	}
+	if containsAny(compact, "提示", "hint", "怎么答", "思路", "不会", "不知道", "没思路", "帮我") {
+		return agent.IntentResult{Intent: "hint", Accepted: false, AssistantReply: hintQuestionReply(question)}, true
+	}
+	return agent.IntentResult{}, false
+}
+
+func containsAny(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func clarifyQuestionReply(question domain.Question) string {
+	topic := strings.Join(question.Tags, "、")
+	if topic == "" {
+		topic = "这道题"
+	}
+	return fmt.Sprintf("我换个说法：这题想看你能不能围绕「%s」讲清概念、机制和边界。你可以先用一句话给结论，再解释为什么，最后补一个适用场景或容易踩的坑。", topic)
+}
+
+func hintQuestionReply(question domain.Question) string {
+	topic := strings.Join(question.Tags, "、")
+	if topic == "" {
+		topic = "题目里的核心概念"
+	}
+	return fmt.Sprintf("可以按这个顺序组织：先定义「%s」，再说它解决了什么问题，然后补充限制、反例或项目里的使用经验。先答一个粗版本也可以，我会根据你的回答继续点评。", topic)
+}
+
+func skippedEvaluation() domain.Evaluation {
+	return domain.Evaluation{
+		Score:        0,
+		Summary:      "本题已按你的要求跳过。",
+		Strengths:    []string{"能主动识别当前卡点"},
+		Improvements: []string{"复盘时先对照标准答案补齐核心概念，再用一句话重述"},
+		Source:       "local",
+	}
 }
 
 func localEvaluate(question domain.Question, answer string, modelErr error, interviewerSkillID string) domain.Evaluation {

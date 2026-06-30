@@ -27,8 +27,26 @@ type EvaluationInput struct {
 	FeedbackTone      string
 }
 
+type IntentInput struct {
+	Question          domain.Question
+	CandidateMessage  string
+	InterviewerName   string
+	InterviewerPrompt string
+	FeedbackTone      string
+}
+
+type IntentResult struct {
+	Intent         string
+	Accepted       bool
+	AssistantReply string
+}
+
 type Evaluator interface {
 	Evaluate(context.Context, EvaluationInput) (domain.Evaluation, error)
+}
+
+type IntentResolver interface {
+	ResolveIntent(context.Context, IntentInput) (IntentResult, error)
 }
 
 type EinoEvaluator struct{ config *config.Store }
@@ -87,6 +105,70 @@ func (e *EinoEvaluator) Evaluate(ctx context.Context, input EvaluationInput) (do
 		result.Score = 100
 	}
 	return domain.Evaluation{Score: result.Score, Summary: result.Summary, Strengths: result.Strengths, Improvements: result.Improvements, Source: "llm"}, nil
+}
+
+func (e *EinoEvaluator) ResolveIntent(ctx context.Context, input IntentInput) (IntentResult, error) {
+	cfg := e.config.Get()
+	if !cfg.Ready() {
+		return IntentResult{}, ErrNotConfigured
+	}
+	temperature := float32(0.1)
+	maxTokens := 360
+	model, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+		APIKey:              cfg.APIKey,
+		BaseURL:             strings.TrimRight(cfg.BaseURL, "/"),
+		Model:               cfg.Model,
+		Temperature:         &temperature,
+		MaxCompletionTokens: &maxTokens,
+		HTTPClient:          &http.Client{Timeout: 20 * time.Second},
+	})
+	if err != nil {
+		return IntentResult{}, fmt.Errorf("创建 Eino ChatModel 失败: %w", err)
+	}
+	prompt := fmt.Sprintf(`你是面试官 Skill「%s」。风格指令：%s。反馈语气：%s。
+你正在进行技术面试，需要判断候选人的这句话在当前题目下的真实意图。
+只返回合法 JSON，不要使用 Markdown。结构必须是：
+{"intent":"answer|hint|clarify|repeat|skip|off_topic|smalltalk","accepted":true或false,"assistantReply":"中文回复，最多两句"}
+
+判定规则：
+- answer：候选人正在尝试回答题目，即使不完整、口语化或包含错误，也应 accepted=true，并留空 assistantReply。
+- skip：候选人明确想跳过/下一题，accepted=true。
+- hint/clarify/repeat：候选人请求提示、解释题意或重复题目，accepted=false，并给出可帮助继续作答的回复。
+- off_topic：候选人输入与当前题无关、抱怨题目不相关、转移话题、谈状态或说不知道怎么关联，accepted=false；要简短理解其处境，再把话题拉回当前题。
+- smalltalk：问候、感谢、闲聊或非面试内容，accepted=false；自然回应后拉回当前题。
+- 不要把明显偏题内容硬判成 answer。
+- 不要泄露标准答案或关键点清单。
+
+当前题目：%s
+题目标签：%s
+候选人输入：%s`, input.InterviewerName, input.InterviewerPrompt, input.FeedbackTone, input.Question.Prompt, strings.Join(input.Question.Tags, "、"), input.CandidateMessage)
+	response, err := model.Generate(ctx, []*schema.Message{
+		{Role: schema.System, Content: "你是 Interview Copilot 的意图识别 Agent，必须输出可解析的 JSON。"},
+		{Role: schema.User, Content: prompt},
+	})
+	if err != nil {
+		return IntentResult{}, fmt.Errorf("调用大模型失败: %w", err)
+	}
+	var result IntentResult
+	if err := json.Unmarshal([]byte(stripCodeFence(response.Content)), &result); err != nil {
+		return IntentResult{}, fmt.Errorf("解析模型意图失败: %w", err)
+	}
+	result.Intent = strings.TrimSpace(strings.ToLower(result.Intent))
+	switch result.Intent {
+	case "answer", "skip":
+		result.Accepted = true
+		result.AssistantReply = ""
+	case "hint", "clarify", "repeat", "off_topic", "smalltalk":
+		result.Accepted = false
+	default:
+		result.Intent = "answer"
+		result.Accepted = true
+		result.AssistantReply = ""
+	}
+	if !result.Accepted && strings.TrimSpace(result.AssistantReply) == "" {
+		result.AssistantReply = "我先把你拉回当前题：可以先讲一个粗略结论，再补充原因和边界。"
+	}
+	return result, nil
 }
 
 func (e *EinoEvaluator) Test(ctx context.Context) error {

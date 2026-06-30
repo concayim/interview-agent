@@ -57,8 +57,79 @@ func TestLocalFallbackWhenModelUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Evaluation.Source != "local" {
-		t.Fatalf("expected local fallback, got %s", result.Evaluation.Source)
+	if result.Evaluation == nil || result.Evaluation.Source != "local" {
+		t.Fatalf("expected local fallback, got %#v", result.Evaluation)
+	}
+}
+
+func TestCandidateCanAskForHintWithoutAdvancing(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	session, err := service.Start(StartInput{Language: "python", Difficulty: "easy", QuestionCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "提示一下"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Accepted {
+		t.Fatal("hint should not be accepted as a final answer")
+	}
+	if result.Intent != "hint" || result.AssistantReply == "" {
+		t.Fatalf("expected hint reply, got %#v", result)
+	}
+	next, err := service.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Current != 0 || next.CurrentQuestion == nil || next.CurrentQuestion.ID != session.CurrentQuestion.ID {
+		t.Fatalf("question advanced after hint: %#v", next)
+	}
+}
+
+func TestCandidateCanSkipQuestion(t *testing.T) {
+	service := NewService(stubEvaluator{})
+	session, err := service.Start(StartInput{Language: "golang", Difficulty: "easy", QuestionCount: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "这题先跳过", ElapsedSeconds: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Accepted || result.Intent != "skip" {
+		t.Fatalf("expected accepted skip, got %#v", result)
+	}
+	if result.Evaluation == nil || result.Evaluation.Score != 0 || result.Evaluation.Source != "local" {
+		t.Fatalf("expected local zero evaluation for skip, got %#v", result.Evaluation)
+	}
+	if result.Current != 1 || result.NextQuestion == nil {
+		t.Fatalf("skip did not advance to next question: %#v", result)
+	}
+}
+
+func TestModelIntentResolverHandlesOffTopicWithoutAdvancing(t *testing.T) {
+	service := NewService(intentStubEvaluator{result: agent.IntentResult{Intent: "off_topic", Accepted: false, AssistantReply: "我理解你在换个话题，不过我们先回到当前题。"}})
+	session, err := service.Start(StartInput{Language: "java", Difficulty: "easy", QuestionCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Answer(context.Background(), session.ID, AnswerInput{Answer: "今天天气不错，我想聊点别的"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Accepted {
+		t.Fatal("off-topic message should not be accepted as an answer")
+	}
+	if result.Intent != "off_topic" || result.AssistantReply == "" {
+		t.Fatalf("expected off-topic reply, got %#v", result)
+	}
+	next, err := service.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Current != 0 {
+		t.Fatalf("off-topic message advanced question: %#v", next)
 	}
 }
 
@@ -87,4 +158,16 @@ type failingEvaluator struct{}
 
 func (failingEvaluator) Evaluate(context.Context, agent.EvaluationInput) (domain.Evaluation, error) {
 	return domain.Evaluation{}, agent.ErrNotConfigured
+}
+
+type intentStubEvaluator struct {
+	result agent.IntentResult
+}
+
+func (intentStubEvaluator) Evaluate(context.Context, agent.EvaluationInput) (domain.Evaluation, error) {
+	return domain.Evaluation{Score: 88, Summary: "测试评价", Strengths: []string{"结构清晰"}, Improvements: []string{"补充边界"}, Source: "llm"}, nil
+}
+
+func (e intentStubEvaluator) ResolveIntent(context.Context, agent.IntentInput) (agent.IntentResult, error) {
+	return e.result, nil
 }

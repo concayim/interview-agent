@@ -279,6 +279,8 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const speechBaseAnswerRef = useRef('')
+  const speechDraftRef = useRef('')
   useEffect(() => { const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)), 1000); return () => clearInterval(timer) }, [session.startedAt])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, sideMessages, session.currentQuestion, readyReport])
   useEffect(() => {
@@ -350,15 +352,25 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     }
     const recognition = new Recognition()
     recognition.lang = session.speechLanguage || 'zh-CN'
-    recognition.interimResults = false
-    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.continuous = true
     recognition.onresult = (event) => {
       const text = Array.from(event.results).map((result) => result[0].transcript).join('')
-      setAnswer((previous) => [previous, text].filter(Boolean).join(previous ? '\n' : ''))
+      speechDraftRef.current = text.trim()
+      setAnswer(mergeSpeechText(speechBaseAnswerRef.current, speechDraftRef.current))
     }
-    recognition.onerror = () => { setSpeechMode('idle'); startRecordingFallback() }
+    recognition.onerror = () => {
+      setSpeechMode('idle')
+      if (speechDraftRef.current) {
+        notify({ type: 'error', message: '语音识别已中断，已保留识别到的文字' })
+        return
+      }
+      startRecordingFallback()
+    }
     recognition.onend = () => setSpeechMode('idle')
     recognitionRef.current = recognition
+    speechBaseAnswerRef.current = answer.trimEnd()
+    speechDraftRef.current = ''
     setSpeechMode('recognizing')
     try { recognition.start() } catch { setSpeechMode('idle'); startRecordingFallback() }
   }
@@ -558,6 +570,7 @@ function resourceKindIcon(kind: string) { if (kind === 'video') return <PlayCirc
 function resourceDate(resource: LearningResource) { const date = resource.publishedAt ? new Date(resource.publishedAt) : undefined; return date && date.getFullYear() > 1900 ? date.toLocaleDateString('zh-CN') : resource.source }
 function intentLabel(intent: string) { return ({ hint: '提示', clarify: '换个说法', repeat: '重复题目', skip: '跳过', off_topic: '拉回题目', smalltalk: '闲聊回应', message: '继续对话' } as Record<string, string>)[intent] ?? '继续对话' }
 function speechButtonText(mode: SpeechMode) { return ({ idle: '语音', recognizing: '聆听中', recording: '停止录音', transcribing: '转写中' } as Record<SpeechMode, string>)[mode] }
+function mergeSpeechText(base: string, transcript: string) { return [base.trimEnd(), transcript.trim()].filter(Boolean).join(base.trim() ? '\n' : '') }
 
 function SettingsDrawer({ open, value, onClose, onSaved, notify }: { open: boolean; value: ModelConfig; onClose: () => void; onSaved: (value: ModelConfig) => void; notify: (value: Toast) => void }) {
   const [apiKey, setApiKey] = useState('')

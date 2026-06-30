@@ -213,7 +213,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 ### `POST /speech/transcriptions`
 
-`Content-Type: multipart/form-data`，字段名为 `audio`，可选字段 `language` 为 `zh-CN` 或 `en-US`。该接口使用当前模型配置中的 `Base URL`、`API Key` 与 `Speech Model` 调用 OpenAI-compatible `/audio/transcriptions`，用于 Electron 不支持 Web Speech API 时的录音转写兜底。单段语音最大 12 MB。
+`Content-Type: multipart/form-data`，字段名为 `audio`，可选字段 `language` 为 `zh`、`en`、`zh-CN` 或 `en-US`。该接口使用当前模型配置中的 `Base URL`、`API Key` 与 `Speech Model` 调用 OpenAI-compatible `/audio/transcriptions`，用于 Electron 不支持 Web Speech API 时的录音转写兜底。单段语音最大 12 MB。
 
 响应 `200`：
 
@@ -222,6 +222,25 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 ```
 
 需要在模型设置中填写 `Speech Model`；未填写时返回 `400`，上游模型不可用或不支持音频时返回 `502`，错误信息会优先提取服务商返回的 `error.message` 或 `message`。
+
+### `POST /speech/transcriptions/stream`
+
+请求体同 `/speech/transcriptions`。服务端会向上游 `/audio/transcriptions` 追加 `stream=true`，并以 `text/event-stream` 返回统一的流式事件。前端语音兜底默认使用该接口，把增量文本写入回答框。
+
+事件格式：
+
+```text
+event: delta
+data: {"text":"增量文字"}
+
+event: done
+data: {"text":"完整或最后一段文字"}
+
+event: error
+data: {"error":"可读的错误信息"}
+```
+
+若上游不支持 SSE 但返回普通 JSON `{ "text": "..." }`，服务端会发送一次 `delta` 后再发送 `done`。
 
 ### `GET /interviews/{id}/report`
 

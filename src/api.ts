@@ -19,6 +19,64 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T
 }
 
+function speechFormData(audio: Blob, language: string) {
+  const body = new FormData()
+  body.append('audio', audio, `answer-${Date.now()}.webm`)
+  body.append('language', language.startsWith('en') ? 'en' : 'zh')
+  return body
+}
+
+async function transcribeSpeechStream(audio: Blob, language: string, onDelta: (text: string, fullText: string) => void) {
+  const { baseUrl, token } = runtimeConfig()
+  const headers = new Headers()
+  if (token) headers.set('X-Interview-Agent-Token', token)
+  const response = await fetch(`${baseUrl}/speech/transcriptions/stream`, { method: 'POST', headers, body: speechFormData(audio, language) })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(payload.error || `请求失败（${response.status}）`)
+  }
+  if (!response.body) {
+    const payload = await response.json().catch(() => ({ text: '' }))
+    const text = String(payload.text || '')
+    if (text) onDelta(text, text)
+    return { text }
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let fullText = ''
+
+  const handleBlock = (block: string) => {
+    let event = 'message'
+    const data: string[] = []
+    block.split(/\r?\n/).forEach((line) => {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      if (line.startsWith('data:')) data.push(line.slice(5).trim())
+    })
+    if (!data.length) return
+    const payload = JSON.parse(data.join('\n') || '{}')
+    if (event === 'error') throw new Error(payload.error || '语音转写失败')
+    if (event === 'delta') {
+      const text = String(payload.text || '')
+      if (!text) return
+      fullText += text
+      onDelta(text, fullText)
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+    const blocks = buffer.split(/\n\n/)
+    buffer = blocks.pop() ?? ''
+    for (const block of blocks) handleBlock(block)
+    if (done) break
+  }
+  if (buffer.trim()) handleBlock(buffer)
+  return { text: fullText.trim() }
+}
+
 export const api = {
   health: () => request<{ status: string; modelConfigured: boolean }>('/health'),
   uploadResume: (file: File) => {
@@ -32,11 +90,9 @@ export const api = {
   answer: (sessionId: string, answer: string, elapsedSeconds: number) =>
     request<AnswerResult>(`/interviews/${sessionId}/answers`, { method: 'POST', body: JSON.stringify({ answer, elapsedSeconds }) }),
   transcribeSpeech: (audio: Blob, language: string) => {
-    const body = new FormData()
-    body.append('audio', audio, `answer-${Date.now()}.webm`)
-    body.append('language', language.startsWith('en') ? 'en' : 'zh')
-    return request<{ text: string }>('/speech/transcriptions', { method: 'POST', body })
+    return request<{ text: string }>('/speech/transcriptions', { method: 'POST', body: speechFormData(audio, language) })
   },
+  transcribeSpeechStream,
   report: (sessionId: string) => request<Report>(`/interviews/${sessionId}/report`),
   getModelConfig: () => request<ModelConfig>('/config/model'),
   saveModelConfig: (input: { apiKey: string; baseUrl: string; model: string; speechModel: string; enabled: boolean; clearApiKey?: boolean }) =>

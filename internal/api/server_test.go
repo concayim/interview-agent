@@ -158,6 +158,53 @@ func TestSpeechTranscriptionUsesSpeechModel(t *testing.T) {
 	}
 }
 
+func TestSpeechTranscriptionStreamForwardsDeltas(t *testing.T) {
+	var receivedStream string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/audio/transcriptions" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(12 << 20); err != nil {
+			t.Fatal(err)
+		}
+		receivedStream = r.FormValue("stream")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: transcript.text.delta\ndata: {\"type\":\"transcript.text.delta\",\"delta\":\"你好\"}\n\n"))
+		_, _ = w.Write([]byte("event: transcript.text.delta\ndata: {\"type\":\"transcript.text.delta\",\"delta\":\"，世界\"}\n\n"))
+		_, _ = w.Write([]byte("event: transcript.text.done\ndata: {\"type\":\"transcript.text.done\",\"text\":\"你好，世界\"}\n\n"))
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	store, err := config.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(config.ModelConfig{APIKey: "sk-test", BaseURL: upstream.URL + "/v1", Model: "chat-model", SpeechModel: "whisper-1", Enabled: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHandler(t, dir, "secret", store)
+
+	body, contentType := speechRequestBody(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/speech/transcriptions/stream", body)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("X-Interview-Agent-Token", "secret")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if receivedStream != "true" {
+		t.Fatalf("expected stream=true, got %q", receivedStream)
+	}
+	bodyText := response.Body.String()
+	if !strings.Contains(bodyText, "event: delta") || !strings.Contains(bodyText, "你好") || !strings.Contains(bodyText, "世界") {
+		t.Fatalf("expected streamed transcript deltas, got %s", bodyText)
+	}
+}
+
 func speechRequestBody(t *testing.T) (*bytes.Buffer, string) {
 	t.Helper()
 	var body bytes.Buffer

@@ -387,8 +387,13 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         if (!blob.size) { setSpeechMode('idle'); notify({ type: 'error', message: '没有录到声音，请再试一次' }); return }
         setSpeechMode('transcribing')
         try {
-          const result = await api.transcribeSpeech(blob, session.speechLanguage || 'zh-CN')
-          setAnswer((previous) => [previous, result.text].filter(Boolean).join(previous ? '\n' : ''))
+          const baseAnswer = speechBaseAnswerRef.current
+          let streamedText = ''
+          const result = await api.transcribeSpeechStream(blob, session.speechLanguage || 'zh-CN', (_delta, fullText) => {
+            streamedText = fullText
+            setAnswer(mergeSpeechText(baseAnswer, fullText))
+          })
+          if (!streamedText && result.text) setAnswer(mergeSpeechText(baseAnswer, result.text))
         } catch (error) {
           notify({ type: 'error', message: error instanceof Error ? error.message : '语音转写失败，请检查模型是否支持音频转写' })
         } finally {
@@ -396,6 +401,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         }
       }
       mediaRecorderRef.current = recorder
+      speechBaseAnswerRef.current = answer.trimEnd()
       setSpeechMode('recording')
       recorder.start()
     } catch (error) {

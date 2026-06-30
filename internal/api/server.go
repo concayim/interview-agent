@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/subtle"
@@ -58,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/config/model", s.putModelConfig)
 	mux.HandleFunc("POST /api/v1/config/model/test", s.testModelConfig)
 	mux.HandleFunc("POST /api/v1/speech/transcriptions", s.transcribeSpeech)
+	mux.HandleFunc("POST /api/v1/speech/transcriptions/stream", s.streamTranscribeSpeech)
 	mux.HandleFunc("GET /api/v1/skills", s.listSkills)
 	mux.HandleFunc("GET /api/v1/knowledge/bases", s.listKnowledgeBases)
 	mux.HandleFunc("GET /api/v1/knowledge/bases/{id}/qa", s.searchKnowledge)
@@ -236,62 +238,14 @@ func (s *Server) testModelConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
-	cfg := s.config.Get()
-	if !cfg.Ready() {
-		writeError(w, http.StatusBadRequest, "请先配置并启用支持音频转写的模型")
+	upstream, apiErr := s.newSpeechTranscriptionRequest(w, r, false)
+	if apiErr != nil {
+		writeError(w, apiErr.status, apiErr.message)
 		return
 	}
-	speechModel := strings.TrimSpace(cfg.SpeechModel)
-	if speechModel == "" {
-		writeError(w, http.StatusBadRequest, "请在模型设置里填写 Speech Model，例如 whisper-1 或服务商提供的音频转写模型")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxSpeechUploadSize+(1<<20))
-	if err := r.ParseMultipartForm(maxSpeechUploadSize); err != nil {
-		writeError(w, http.StatusBadRequest, "语音片段不能超过 12 MB")
-		return
-	}
-	file, header, err := r.FormFile("audio")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "请提供语音片段")
-		return
-	}
-	defer file.Close()
+	defer upstream.cancel()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filepath.Base(header.Filename))
-	if err != nil {
-		s.internalError(w, err)
-		return
-	}
-	if _, err := io.Copy(part, io.LimitReader(file, maxSpeechUploadSize+1)); err != nil {
-		s.internalError(w, err)
-		return
-	}
-	_ = writer.WriteField("model", speechModel)
-	if language := strings.TrimSpace(r.FormValue("language")); language != "" {
-		_ = writer.WriteField("language", language)
-	}
-	if err := writer.Close(); err != nil {
-		s.internalError(w, err)
-		return
-	}
-
-	baseURL := strings.TrimRight(cfg.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
-	ctx, cancel := contextWithTimeout(r, 30*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/audio/transcriptions", &body)
-	if err != nil {
-		s.internalError(w, err)
-		return
-	}
-	request.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(upstream.request)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "语音转写失败："+err.Error())
 		return
@@ -314,6 +268,232 @@ func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"text": strings.TrimSpace(result.Text)})
+}
+
+func (s *Server) streamTranscribeSpeech(w http.ResponseWriter, r *http.Request) {
+	upstream, apiErr := s.newSpeechTranscriptionRequest(w, r, true)
+	if apiErr != nil {
+		writeError(w, apiErr.status, apiErr.message)
+		return
+	}
+	defer upstream.cancel()
+
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(upstream.request)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "语音转写失败："+err.Error())
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "语音转写失败："+extractProviderError(payload))
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "当前环境不支持流式输出")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	if strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		forwardSpeechEventStream(w, flusher, response.Body)
+		return
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		writeSpeechStreamEvent(w, flusher, "error", map[string]string{"error": "读取语音转写响应失败：" + err.Error()})
+		return
+	}
+	text := extractTranscriptText(payload)
+	if strings.TrimSpace(text) == "" {
+		writeSpeechStreamEvent(w, flusher, "error", map[string]string{"error": "语音转写响应无法解析"})
+		return
+	}
+	writeSpeechStreamEvent(w, flusher, "delta", map[string]string{"text": strings.TrimSpace(text)})
+	writeSpeechStreamEvent(w, flusher, "done", map[string]string{"text": strings.TrimSpace(text)})
+}
+
+type apiError struct {
+	status  int
+	message string
+}
+
+type speechTranscriptionRequest struct {
+	request *http.Request
+	cancel  context.CancelFunc
+}
+
+func (s *Server) newSpeechTranscriptionRequest(w http.ResponseWriter, r *http.Request, stream bool) (*speechTranscriptionRequest, *apiError) {
+	cfg := s.config.Get()
+	if !cfg.Ready() {
+		return nil, &apiError{status: http.StatusBadRequest, message: "请先配置并启用支持音频转写的模型"}
+	}
+	speechModel := strings.TrimSpace(cfg.SpeechModel)
+	if speechModel == "" {
+		return nil, &apiError{status: http.StatusBadRequest, message: "请在模型设置里填写 Speech Model，例如 whisper-1 或服务商提供的音频转写模型"}
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpeechUploadSize+(1<<20))
+	if err := r.ParseMultipartForm(maxSpeechUploadSize); err != nil {
+		return nil, &apiError{status: http.StatusBadRequest, message: "语音片段不能超过 12 MB"}
+	}
+	file, header, err := r.FormFile("audio")
+	if err != nil {
+		return nil, &apiError{status: http.StatusBadRequest, message: "请提供语音片段"}
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filepath.Base(header.Filename))
+	if err != nil {
+		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+	if _, err := io.Copy(part, io.LimitReader(file, maxSpeechUploadSize+1)); err != nil {
+		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+	_ = writer.WriteField("model", speechModel)
+	if stream {
+		_ = writer.WriteField("stream", "true")
+	}
+	if language := strings.TrimSpace(r.FormValue("language")); language != "" {
+		_ = writer.WriteField("language", language)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+
+	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	ctx, cancel := contextWithTimeout(r, 30*time.Second)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/audio/transcriptions", &body)
+	if err != nil {
+		cancel()
+		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+	request.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	return &speechTranscriptionRequest{request: request, cancel: cancel}, nil
+}
+
+func forwardSpeechEventStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	eventName := ""
+	dataLines := []string{}
+	sentDelta := false
+	flushEvent := func() {
+		if len(dataLines) == 0 {
+			eventName = ""
+			return
+		}
+		data := strings.TrimSpace(strings.Join(dataLines, "\n"))
+		event := strings.TrimSpace(eventName)
+		eventName = ""
+		dataLines = nil
+		if data == "" {
+			return
+		}
+		if data == "[DONE]" {
+			writeSpeechStreamEvent(w, flusher, "done", map[string]string{})
+			return
+		}
+		text, done := extractTranscriptDelta([]byte(data))
+		if text != "" && (!done || !sentDelta) {
+			sentDelta = true
+			writeSpeechStreamEvent(w, flusher, "delta", map[string]string{"text": text})
+		}
+		if done || strings.Contains(event, "done") || strings.Contains(event, "completed") {
+			writeSpeechStreamEvent(w, flusher, "done", map[string]string{"text": text})
+		}
+	}
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line == "" {
+			flushEvent()
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	flushEvent()
+	if err := scanner.Err(); err != nil {
+		writeSpeechStreamEvent(w, flusher, "error", map[string]string{"error": "读取语音转写流失败：" + err.Error()})
+		return
+	}
+	writeSpeechStreamEvent(w, flusher, "done", map[string]string{})
+}
+
+func writeSpeechStreamEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		data = []byte(`{}`)
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+	flusher.Flush()
+}
+
+func extractTranscriptText(payload []byte) string {
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(payload, &result); err == nil {
+		return strings.TrimSpace(result.Text)
+	}
+	return strings.TrimSpace(string(payload))
+}
+
+func extractTranscriptDelta(payload []byte) (string, bool) {
+	var raw any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return strings.TrimSpace(string(payload)), false
+	}
+	done := false
+	if typed, ok := raw.(map[string]any); ok {
+		if value, ok := typed["type"].(string); ok {
+			done = strings.Contains(value, "done") || strings.Contains(value, "completed")
+		}
+	}
+	return strings.TrimSpace(findTranscriptString(raw)), done
+}
+
+func findTranscriptString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		for _, key := range []string{"delta", "text", "transcript", "content"} {
+			if text, ok := typed[key].(string); ok && strings.TrimSpace(text) != "" {
+				return text
+			}
+		}
+		for _, key := range []string{"message", "choice", "choices", "data", "result"} {
+			if text := findTranscriptString(typed[key]); text != "" {
+				return text
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if text := findTranscriptString(item); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Server) listSkills(w http.ResponseWriter, _ *http.Request) {

@@ -205,6 +205,48 @@ func TestSpeechTranscriptionStreamForwardsDeltas(t *testing.T) {
 	}
 }
 
+func TestSpeechTranscriptionStreamHandlesNestedDeltasAndCRLF(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(12 << 20); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\r\n\r\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\r\n\r\n"))
+		_, _ = w.Write([]byte("data: [DONE]\r\n\r\n"))
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	store, err := config.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(config.ModelConfig{APIKey: "sk-test", BaseURL: upstream.URL + "/v1", Model: "chat-model", SpeechModel: "whisper-1", Enabled: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHandler(t, dir, "secret", store)
+
+	body, contentType := speechRequestBody(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/speech/transcriptions/stream", body)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("X-Interview-Agent-Token", "secret")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	bodyText := response.Body.String()
+	if !strings.Contains(bodyText, "hello") || !strings.Contains(bodyText, "world") {
+		t.Fatalf("expected nested streamed deltas, got %s", bodyText)
+	}
+	if strings.Count(bodyText, "event: done") != 1 {
+		t.Fatalf("expected one done event, got %s", bodyText)
+	}
+}
+
 func speechRequestBody(t *testing.T) (*bytes.Buffer, string) {
 	t.Helper()
 	var body bytes.Buffer

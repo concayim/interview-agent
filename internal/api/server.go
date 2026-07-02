@@ -391,20 +391,24 @@ func forwardSpeechEventStream(w http.ResponseWriter, flusher http.Flusher, body 
 	eventName := ""
 	dataLines := []string{}
 	sentDelta := false
+	sentDone := false
 	flushEvent := func() {
 		if len(dataLines) == 0 {
 			eventName = ""
 			return
 		}
 		data := strings.TrimSpace(strings.Join(dataLines, "\n"))
-		event := strings.TrimSpace(eventName)
+		event := strings.ToLower(strings.TrimSpace(eventName))
 		eventName = ""
 		dataLines = nil
 		if data == "" {
 			return
 		}
 		if data == "[DONE]" {
-			writeSpeechStreamEvent(w, flusher, "done", map[string]string{})
+			if !sentDone {
+				sentDone = true
+				writeSpeechStreamEvent(w, flusher, "done", map[string]string{})
+			}
 			return
 		}
 		text, done := extractTranscriptDelta([]byte(data))
@@ -413,7 +417,10 @@ func forwardSpeechEventStream(w http.ResponseWriter, flusher http.Flusher, body 
 			writeSpeechStreamEvent(w, flusher, "delta", map[string]string{"text": text})
 		}
 		if done || strings.Contains(event, "done") || strings.Contains(event, "completed") {
-			writeSpeechStreamEvent(w, flusher, "done", map[string]string{"text": text})
+			if !sentDone {
+				sentDone = true
+				writeSpeechStreamEvent(w, flusher, "done", map[string]string{"text": text})
+			}
 		}
 	}
 	for scanner.Scan() {
@@ -435,7 +442,9 @@ func forwardSpeechEventStream(w http.ResponseWriter, flusher http.Flusher, body 
 		writeSpeechStreamEvent(w, flusher, "error", map[string]string{"error": "读取语音转写流失败：" + err.Error()})
 		return
 	}
-	writeSpeechStreamEvent(w, flusher, "done", map[string]string{})
+	if !sentDone {
+		writeSpeechStreamEvent(w, flusher, "done", map[string]string{})
+	}
 }
 
 func writeSpeechStreamEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) {
@@ -465,7 +474,16 @@ func extractTranscriptDelta(payload []byte) (string, bool) {
 	done := false
 	if typed, ok := raw.(map[string]any); ok {
 		if value, ok := typed["type"].(string); ok {
-			done = strings.Contains(value, "done") || strings.Contains(value, "completed")
+			lower := strings.ToLower(value)
+			done = strings.Contains(lower, "done") || strings.Contains(lower, "completed") || strings.Contains(lower, "final")
+		}
+		if value, ok := typed["finish_reason"].(string); ok && strings.TrimSpace(value) != "" {
+			done = true
+		}
+		for _, key := range []string{"done", "completed", "is_final", "final"} {
+			if value, ok := typed[key].(bool); ok && value {
+				done = true
+			}
 		}
 	}
 	return strings.TrimSpace(findTranscriptString(raw)), done
@@ -476,12 +494,12 @@ func findTranscriptString(value any) string {
 	case string:
 		return typed
 	case map[string]any:
-		for _, key := range []string{"delta", "text", "transcript", "content"} {
+		for _, key := range []string{"delta", "text", "transcript", "content", "partial", "output_text"} {
 			if text, ok := typed[key].(string); ok && strings.TrimSpace(text) != "" {
 				return text
 			}
 		}
-		for _, key := range []string{"message", "choice", "choices", "data", "result"} {
+		for _, key := range []string{"delta", "text", "transcript", "content", "message", "choice", "choices", "data", "result", "output", "alternatives"} {
 			if text := findTranscriptString(typed[key]); text != "" {
 				return text
 			}

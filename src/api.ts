@@ -55,20 +55,26 @@ async function transcribeSpeechStream(audio: Blob, language: string, onDelta: (t
       if (line.startsWith('data:')) data.push(line.slice(5).trim())
     })
     if (!data.length) return
-    const payload = JSON.parse(data.join('\n') || '{}')
+    const raw = data.join('\n')
+    const payload = JSON.parse(raw || '{}')
+    const text = String(payload.text || '')
     if (event === 'error') throw new Error(payload.error || '语音转写失败')
-    if (event === 'delta') {
-      const text = String(payload.text || '')
+    if (event === 'delta' || event === 'message') {
       if (!text) return
       fullText += text
       onDelta(text, fullText)
+      return
+    }
+    if (event === 'done' && text && (!fullText || text.startsWith(fullText))) {
+      fullText = text
+      onDelta('', fullText)
     }
   }
 
   while (true) {
     const { value, done } = await reader.read()
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
-    const blocks = buffer.split(/\n\n/)
+    const blocks = buffer.split(/\r?\n\r?\n/)
     buffer = blocks.pop() ?? ''
     for (const block of blocks) handleBlock(block)
     if (done) break

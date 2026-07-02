@@ -234,13 +234,13 @@ event: delta
 data: {"text":"增量文字"}
 
 event: done
-data: {"text":"完整或最后一段文字"}
+data: {"text":"完整文本，可为空"}
 
 event: error
 data: {"error":"可读的错误信息"}
 ```
 
-若上游不支持 SSE 但返回普通 JSON `{ "text": "..." }`，服务端会发送一次 `delta` 后再发送 `done`。
+`delta` 是前端写入回答框的主要增量；`done` 只表示结束，`text` 可能为空。服务端会兼容 `delta`、`choices[].delta.content`、`text`、`transcript` 等常见上游字段，并支持 LF / CRLF 事件分隔。若上游不支持 SSE 但返回普通 JSON `{ "text": "..." }`，服务端会发送一次 `delta` 后再发送 `done`。
 
 ### `GET /interviews/{id}/report`
 

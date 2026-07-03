@@ -26,24 +26,14 @@ function speechFormData(audio: Blob, language: string) {
   return body
 }
 
+async function transcribeSpeechOnce(audio: Blob, language: string) {
+  return request<{ text: string }>('/speech/transcriptions', { method: 'POST', body: speechFormData(audio, language) })
+}
+
 async function transcribeSpeechStream(audio: Blob, language: string, onDelta: (text: string, fullText: string) => void) {
   const { baseUrl, token } = runtimeConfig()
   const headers = new Headers()
   if (token) headers.set('X-Interview-Agent-Token', token)
-  const response = await fetch(`${baseUrl}/speech/transcriptions/stream`, { method: 'POST', headers, body: speechFormData(audio, language) })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}))
-    throw new Error(payload.error || `请求失败（${response.status}）`)
-  }
-  if (!response.body) {
-    const payload = await response.json().catch(() => ({ text: '' }))
-    const text = String(payload.text || '')
-    if (text) onDelta(text, text)
-    return { text }
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
   let buffer = ''
   let fullText = ''
 
@@ -71,16 +61,36 @@ async function transcribeSpeechStream(audio: Blob, language: string, onDelta: (t
     }
   }
 
-  while (true) {
-    const { value, done } = await reader.read()
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
-    const blocks = buffer.split(/\r?\n\r?\n/)
-    buffer = blocks.pop() ?? ''
-    for (const block of blocks) handleBlock(block)
-    if (done) break
+  try {
+    const response = await fetch(`${baseUrl}/speech/transcriptions/stream`, { method: 'POST', headers, body: speechFormData(audio, language) })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      throw new Error(payload.error || `请求失败（${response.status}）`)
+    }
+    if (!response.body) {
+      const result = await transcribeSpeechOnce(audio, language)
+      if (result.text) onDelta(result.text, result.text)
+      return result
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() ?? ''
+      for (const block of blocks) handleBlock(block)
+      if (done) break
+    }
+    if (buffer.trim()) handleBlock(buffer)
+    return { text: fullText.trim() }
+  } catch {
+    if (fullText.trim()) return { text: fullText.trim() }
+    const result = await transcribeSpeechOnce(audio, language)
+    if (result.text) onDelta(result.text, result.text)
+    return result
   }
-  if (buffer.trim()) handleBlock(buffer)
-  return { text: fullText.trim() }
 }
 
 export const api = {
@@ -96,7 +106,7 @@ export const api = {
   answer: (sessionId: string, answer: string, elapsedSeconds: number) =>
     request<AnswerResult>(`/interviews/${sessionId}/answers`, { method: 'POST', body: JSON.stringify({ answer, elapsedSeconds }) }),
   transcribeSpeech: (audio: Blob, language: string) => {
-    return request<{ text: string }>('/speech/transcriptions', { method: 'POST', body: speechFormData(audio, language) })
+    return transcribeSpeechOnce(audio, language)
   },
   transcribeSpeechStream,
   report: (sessionId: string) => request<Report>(`/interviews/${sessionId}/report`),

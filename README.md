@@ -66,7 +66,7 @@ npm test
 
 点击“测试连接”成功后，创建面试会优先通过模型生成本场题目，逐题交互会通过模型理解意图并评价答案。模型不可用不会中断面试，而是自动使用内置题库和本地规则评分。单次回答链路控制在 20 秒内，前端会显示“理解意图、生成反馈、更新进度”的处理流程。
 
-语音输入不会自动提交答案。浏览器识别路径会实时把临时识别结果写入回答框，用户可以修改后再发送；如果 Electron 环境不支持 Web Speech API，语音按钮会自动改用录音转写。录音转写会调用当前 `Base URL` 下的 OpenAI-compatible `/audio/transcriptions`，并优先通过 `/speech/transcriptions/stream` 将转写增量流式写入回答框；如果服务商不支持流式转写，则退化为一次性写入最终文本。流式解析兼容常见 SSE 增量格式与 LF / CRLF 分隔。转写使用 `Speech Model` 字段；如果该字段为空或模型不支持音频，界面会显示可读错误。
+语音输入不会自动提交答案。浏览器识别路径会实时把临时识别结果写入回答框，用户可以修改后再发送；如果 Electron 环境不支持 Web Speech API，语音按钮会自动改用录音转写。录音转写会调用当前 `Base URL` 下的 OpenAI-compatible `/audio/transcriptions`，并优先通过 `/speech/transcriptions/stream` 将转写增量流式写入回答框；如果服务商不支持 `stream=true` 或流式转写，则服务端和前端都会退化为普通转写并一次性写入最终文本。流式解析兼容常见 SSE 增量格式与 LF / CRLF 分隔。转写使用 `Speech Model` 字段；如果该字段为空或模型不支持音频，界面会显示可读错误。
 
 配置文件保存在 Electron `userData/data/model-config.json`，权限为 `0600`。它不会写入仓库或日志。生产环境若需要更高安全级别，建议将 API Key 迁移到系统 Keychain / Credential Manager。
 

@@ -238,40 +238,26 @@ func (s *Server) testModelConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) transcribeSpeech(w http.ResponseWriter, r *http.Request) {
-	upstream, apiErr := s.newSpeechTranscriptionRequest(w, r, false)
+	speechPayload, apiErr := s.parseSpeechTranscriptionPayload(w, r)
 	if apiErr != nil {
 		writeError(w, apiErr.status, apiErr.message)
 		return
 	}
-	defer upstream.cancel()
-
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(upstream.request)
+	text, err := transcribeSpeechWithoutStream(speechPayload)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "语音转写失败："+err.Error())
 		return
 	}
-	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		s.internalError(w, err)
-		return
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		writeError(w, http.StatusBadGateway, "语音转写失败："+extractProviderError(payload))
-		return
-	}
-	var result struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(payload, &result); err != nil || strings.TrimSpace(result.Text) == "" {
-		writeError(w, http.StatusBadGateway, "语音转写响应无法解析")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"text": strings.TrimSpace(result.Text)})
+	writeJSON(w, http.StatusOK, map[string]string{"text": text})
 }
 
 func (s *Server) streamTranscribeSpeech(w http.ResponseWriter, r *http.Request) {
-	upstream, apiErr := s.newSpeechTranscriptionRequest(w, r, true)
+	speechPayload, apiErr := s.parseSpeechTranscriptionPayload(w, r)
+	if apiErr != nil {
+		writeError(w, apiErr.status, apiErr.message)
+		return
+	}
+	upstream, apiErr := newSpeechTranscriptionRequest(speechPayload, true)
 	if apiErr != nil {
 		writeError(w, apiErr.status, apiErr.message)
 		return
@@ -285,12 +271,19 @@ func (s *Server) streamTranscribeSpeech(w http.ResponseWriter, r *http.Request) 
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		errorPayload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		if err != nil {
 			s.internalError(w, err)
 			return
 		}
-		writeError(w, http.StatusBadGateway, "语音转写失败："+extractProviderError(payload))
+		if shouldRetrySpeechWithoutStream(response.StatusCode, errorPayload) {
+			text, retryErr := transcribeSpeechWithoutStream(speechPayload)
+			if retryErr == nil {
+				writeSpeechTextAsStream(w, text)
+				return
+			}
+		}
+		writeError(w, http.StatusBadGateway, "语音转写失败："+extractProviderError(errorPayload))
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -331,7 +324,17 @@ type speechTranscriptionRequest struct {
 	cancel  context.CancelFunc
 }
 
-func (s *Server) newSpeechTranscriptionRequest(w http.ResponseWriter, r *http.Request, stream bool) (*speechTranscriptionRequest, *apiError) {
+type speechTranscriptionPayload struct {
+	ctx      context.Context
+	apiKey   string
+	baseURL  string
+	model    string
+	language string
+	fileName string
+	audio    []byte
+}
+
+func (s *Server) parseSpeechTranscriptionPayload(w http.ResponseWriter, r *http.Request) (*speechTranscriptionPayload, *apiError) {
 	cfg := s.config.Get()
 	if !cfg.Ready() {
 		return nil, &apiError{status: http.StatusBadRequest, message: "请先配置并启用支持音频转写的模型"}
@@ -350,39 +353,111 @@ func (s *Server) newSpeechTranscriptionRequest(w http.ResponseWriter, r *http.Re
 	}
 	defer file.Close()
 
+	var audio bytes.Buffer
+	if _, err := io.Copy(&audio, io.LimitReader(file, maxSpeechUploadSize+1)); err != nil {
+		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+	if audio.Len() > maxSpeechUploadSize {
+		return nil, &apiError{status: http.StatusBadRequest, message: "语音片段不能超过 12 MB"}
+	}
+	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	return &speechTranscriptionPayload{
+		ctx:      r.Context(),
+		apiKey:   cfg.APIKey,
+		baseURL:  baseURL,
+		model:    speechModel,
+		language: strings.TrimSpace(r.FormValue("language")),
+		fileName: filepath.Base(header.Filename),
+		audio:    audio.Bytes(),
+	}, nil
+}
+
+func newSpeechTranscriptionRequest(payload *speechTranscriptionPayload, stream bool) (*speechTranscriptionRequest, *apiError) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filepath.Base(header.Filename))
+	part, err := writer.CreateFormFile("file", payload.fileName)
 	if err != nil {
 		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
 	}
-	if _, err := io.Copy(part, io.LimitReader(file, maxSpeechUploadSize+1)); err != nil {
+	if _, err := io.Copy(part, bytes.NewReader(payload.audio)); err != nil {
 		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
 	}
-	_ = writer.WriteField("model", speechModel)
+	_ = writer.WriteField("model", payload.model)
 	if stream {
 		_ = writer.WriteField("stream", "true")
 	}
-	if language := strings.TrimSpace(r.FormValue("language")); language != "" {
-		_ = writer.WriteField("language", language)
+	if payload.language != "" {
+		_ = writer.WriteField("language", payload.language)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
 	}
 
-	baseURL := strings.TrimRight(cfg.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
-	ctx, cancel := contextWithTimeout(r, 30*time.Second)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/audio/transcriptions", &body)
+	ctx, cancel := context.WithTimeout(payload.ctx, 30*time.Second)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, payload.baseURL+"/audio/transcriptions", &body)
 	if err != nil {
 		cancel()
 		return nil, &apiError{status: http.StatusInternalServerError, message: err.Error()}
 	}
-	request.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	request.Header.Set("Authorization", "Bearer "+payload.apiKey)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	return &speechTranscriptionRequest{request: request, cancel: cancel}, nil
+}
+
+func transcribeSpeechWithoutStream(payload *speechTranscriptionPayload) (string, error) {
+	upstream, apiErr := newSpeechTranscriptionRequest(payload, false)
+	if apiErr != nil {
+		return "", errors.New(apiErr.message)
+	}
+	defer upstream.cancel()
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(upstream.request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", errors.New(extractProviderError(body))
+	}
+	text := extractTranscriptText(body)
+	if strings.TrimSpace(text) == "" {
+		return "", errors.New("语音转写响应无法解析")
+	}
+	return strings.TrimSpace(text), nil
+}
+
+func shouldRetrySpeechWithoutStream(status int, payload []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusNotFound && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	message := strings.ToLower(extractProviderError(payload))
+	return strings.Contains(message, "stream") ||
+		strings.Contains(message, "unknown parameter") ||
+		strings.Contains(message, "unsupported parameter") ||
+		strings.Contains(message, "invalid parameter") ||
+		strings.Contains(message, "unrecognized") ||
+		strings.Contains(message, "not supported") ||
+		strings.Contains(message, "不支持")
+}
+
+func writeSpeechTextAsStream(w http.ResponseWriter, text string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	writeSpeechStreamEvent(w, flusher, "delta", map[string]string{"text": text})
+	writeSpeechStreamEvent(w, flusher, "done", map[string]string{"text": text})
 }
 
 func forwardSpeechEventStream(w http.ResponseWriter, flusher http.Flusher, body io.Reader) {

@@ -247,6 +247,52 @@ func TestSpeechTranscriptionStreamHandlesNestedDeltasAndCRLF(t *testing.T) {
 	}
 }
 
+func TestSpeechTranscriptionStreamFallsBackWhenProviderRejectsStream(t *testing.T) {
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(12 << 20); err != nil {
+			t.Fatal(err)
+		}
+		calls++
+		if r.FormValue("stream") == "true" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"unsupported parameter: stream"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"fallback transcript"}`))
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	store, err := config.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(config.ModelConfig{APIKey: "sk-test", BaseURL: upstream.URL + "/v1", Model: "chat-model", SpeechModel: "whisper-1", Enabled: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHandler(t, dir, "secret", store)
+
+	body, contentType := speechRequestBody(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/speech/transcriptions/stream", body)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("X-Interview-Agent-Token", "secret")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("expected stream request and fallback request, got %d calls", calls)
+	}
+	if !strings.Contains(response.Body.String(), "fallback transcript") {
+		t.Fatalf("expected fallback transcript, got %s", response.Body.String())
+	}
+}
+
 func speechRequestBody(t *testing.T) (*bytes.Buffer, string) {
 	t.Helper()
 	var body bytes.Buffer

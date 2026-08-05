@@ -1,0 +1,19 @@
+{
+  "id": "computer-zig",
+  "kind": "domain",
+  "name": "Zig 工程师",
+  "shortLabel": "Zig",
+  "description": "覆盖 Zig 语言基础、核心机制与工程实践，参考菜鸟教程 14 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "systems",
+  "language": "zig",
+  "accent": "#4f9cf9",
+  "knowledgeBaseId": "computer-zig",
+  "prompt": "围绕 Zig 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "内存管理",
+    "编译期",
+    "系统编程"
+  ]
+}

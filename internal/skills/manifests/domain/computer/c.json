@@ -1,0 +1,19 @@
+{
+  "id": "computer-c",
+  "kind": "domain",
+  "name": "C 工程师",
+  "shortLabel": "C",
+  "description": "覆盖 C 语言基础、核心机制与工程实践，参考菜鸟教程 62 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "systems",
+  "language": "c",
+  "accent": "#20b486",
+  "knowledgeBaseId": "computer-c",
+  "prompt": "围绕 C 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "指针",
+    "内存管理",
+    "编译链接"
+  ]
+}

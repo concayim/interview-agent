@@ -1,0 +1,19 @@
+{
+  "id": "computer-sql",
+  "kind": "domain",
+  "name": "SQL 工程师",
+  "shortLabel": "SQL",
+  "description": "覆盖 SQL 语言基础、核心机制与工程实践，参考菜鸟教程 67 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "data",
+  "language": "sql",
+  "accent": "#d85b73",
+  "knowledgeBaseId": "computer-sql",
+  "prompt": "围绕 SQL 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "SQL",
+    "查询优化",
+    "事务"
+  ]
+}

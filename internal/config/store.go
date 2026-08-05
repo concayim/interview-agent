@@ -9,11 +9,18 @@ import (
 )
 
 type ModelConfig struct {
-	APIKey      string `json:"apiKey"`
-	BaseURL     string `json:"baseUrl"`
-	Model       string `json:"model"`
-	SpeechModel string `json:"speechModel,omitempty"`
-	Enabled     bool   `json:"enabled"`
+	APIKey           string `json:"apiKey"`
+	BaseURL          string `json:"baseUrl"`
+	Model            string `json:"model"`
+	Enabled          bool   `json:"enabled"`
+	SpeechAPIKey     string `json:"speechApiKey,omitempty"`
+	SpeechAppID      string `json:"speechAppId,omitempty"`
+	SpeechResourceID string `json:"speechResourceId,omitempty"`
+	TTSAPIKey        string `json:"ttsApiKey,omitempty"`
+	TTSAppID         string `json:"ttsAppId,omitempty"`
+	TTSResourceID    string `json:"ttsResourceId,omitempty"`
+	TTSSpeaker       string `json:"ttsSpeaker,omitempty"`
+	TTSEnabled       bool   `json:"ttsEnabled,omitempty"`
 }
 
 func (c ModelConfig) Ready() bool {
@@ -21,11 +28,18 @@ func (c ModelConfig) Ready() bool {
 }
 
 type PublicModelConfig struct {
-	BaseURL     string `json:"baseUrl"`
-	Model       string `json:"model"`
-	SpeechModel string `json:"speechModel"`
-	Enabled     bool   `json:"enabled"`
-	HasAPIKey   bool   `json:"hasApiKey"`
+	BaseURL          string `json:"baseUrl"`
+	Model            string `json:"model"`
+	Enabled          bool   `json:"enabled"`
+	HasAPIKey        bool   `json:"hasApiKey"`
+	SpeechAppID      string `json:"speechAppId"`
+	SpeechResourceID string `json:"speechResourceId"`
+	HasSpeechAPIKey  bool   `json:"hasSpeechApiKey"`
+	TTSAppID         string `json:"ttsAppId"`
+	TTSResourceID    string `json:"ttsResourceId"`
+	TTSSpeaker       string `json:"ttsSpeaker"`
+	TTSEnabled       bool   `json:"ttsEnabled"`
+	HasTTSAPIKey     bool   `json:"hasTtsApiKey"`
 }
 
 type Store struct {
@@ -49,6 +63,19 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := json.Unmarshal(data, &s.cfg); err != nil {
 		return nil, err
 	}
+	var persisted map[string]json.RawMessage
+	if json.Unmarshal(data, &persisted) == nil {
+		if _, legacySpeechModel := persisted["speechModel"]; legacySpeechModel {
+			delete(persisted, "speechModel")
+			cleaned, marshalErr := json.MarshalIndent(persisted, "", "  ")
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			if writeErr := os.WriteFile(s.path, cleaned, 0o600); writeErr != nil {
+				return nil, writeErr
+			}
+		}
+	}
 	return s, nil
 }
 
@@ -60,14 +87,24 @@ func (s *Store) Get() ModelConfig {
 
 func (s *Store) Public() PublicModelConfig {
 	cfg := s.Get()
-	return PublicModelConfig{BaseURL: cfg.BaseURL, Model: cfg.Model, SpeechModel: cfg.SpeechModel, Enabled: cfg.Enabled, HasAPIKey: cfg.APIKey != ""}
+	return PublicModelConfig{
+		BaseURL: cfg.BaseURL, Model: cfg.Model, Enabled: cfg.Enabled, HasAPIKey: cfg.APIKey != "",
+		SpeechAppID: cfg.SpeechAppID, SpeechResourceID: cfg.SpeechResourceID, HasSpeechAPIKey: cfg.SpeechAPIKey != "",
+		TTSAppID: cfg.TTSAppID, TTSResourceID: cfg.TTSResourceID, TTSSpeaker: cfg.TTSSpeaker, TTSEnabled: cfg.TTSEnabled, HasTTSAPIKey: cfg.TTSAPIKey != "",
+	}
 }
 
-func (s *Store) Save(next ModelConfig, preserveAPIKey bool) error {
+func (s *Store) Save(next ModelConfig, preserveAPIKey bool, preserveSecrets ...bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if preserveAPIKey && next.APIKey == "" {
 		next.APIKey = s.cfg.APIKey
+	}
+	if len(preserveSecrets) > 0 && preserveSecrets[0] && next.SpeechAPIKey == "" {
+		next.SpeechAPIKey = s.cfg.SpeechAPIKey
+	}
+	if len(preserveSecrets) > 1 && preserveSecrets[1] && next.TTSAPIKey == "" {
+		next.TTSAPIKey = s.cfg.TTSAPIKey
 	}
 	data, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {

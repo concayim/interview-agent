@@ -1,0 +1,19 @@
+{
+  "id": "computer-vbscript",
+  "kind": "domain",
+  "name": "VBScript 工程师",
+  "shortLabel": "VBSc",
+  "description": "覆盖 VBScript 语言基础、核心机制与工程实践，参考菜鸟教程 10 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "language",
+  "language": "vbscript",
+  "accent": "#b56576",
+  "knowledgeBaseId": "computer-vbscript",
+  "prompt": "围绕 VBScript 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "VBScript",
+    "脚本自动化",
+    "COM"
+  ]
+}

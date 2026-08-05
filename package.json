@@ -5,40 +5,69 @@
   "description": "A resume-aware interview practice agent powered by Go, Eino and Electron.",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5174 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5174 electron .\"",
+    "dev:debug": "cross-env ELECTRON_ENABLE_LOGGING=1 ELECTRON_ENABLE_STACK_DUMPING=1 concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5174 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5174 electron .\"",
     "build:renderer": "tsc -b && vite build",
     "build:server": "node scripts/build-server.mjs",
     "build": "npm run build:renderer && npm run build:server",
     "dist": "npm run build && electron-builder",
-    "test": "go test ./... && npm run build:renderer",
+    "test:csp": "npm run build:renderer && electron scripts/test-csp-websocket.cjs",
+    "test": "go test ./... && vitest run && npm run test:csp",
     "format": "gofmt -w cmd internal && tsc -b --pretty false"
   },
   "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
     "@vitejs/plugin-react": "6.0.2",
     "lucide-react": "1.21.0",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@types/node": "24.10.4",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/three": "^0.185.4",
     "concurrently": "9.2.1",
     "cross-env": "10.1.0",
     "electron": "42.4.1",
     "electron-builder": "26.8.1",
     "typescript": "6.0.3",
     "vite": "8.0.16",
+    "vitest": "^4.1.10",
     "wait-on": "9.0.4"
   },
   "build": {
     "appId": "com.interviewcopilot.desktop",
     "productName": "Interview Copilot",
     "asar": true,
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "extraResources": [{"from": "resources/bin", "to": "bin"}],
-    "mac": {"category": "public.app-category.education", "target": ["dmg", "zip"]},
-    "win": {"target": ["nsis"]},
-    "linux": {"target": ["AppImage"]}
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
   }
 }

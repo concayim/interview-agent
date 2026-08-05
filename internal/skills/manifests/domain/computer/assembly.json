@@ -1,0 +1,19 @@
+{
+  "id": "computer-assembly",
+  "kind": "domain",
+  "name": "Assembly 工程师",
+  "shortLabel": "ASM",
+  "description": "覆盖 Assembly 语言基础、核心机制与工程实践，参考菜鸟教程 23 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "systems",
+  "language": "assembly",
+  "accent": "#4f9cf9",
+  "knowledgeBaseId": "computer-assembly",
+  "prompt": "围绕 Assembly 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "指令集",
+    "寄存器",
+    "内存模型"
+  ]
+}

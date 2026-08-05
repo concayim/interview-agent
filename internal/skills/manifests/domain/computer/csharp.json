@@ -1,0 +1,19 @@
+{
+  "id": "computer-csharp",
+  "kind": "domain",
+  "name": "C# 工程师",
+  "shortLabel": "C#",
+  "description": "覆盖 C# 语言基础、核心机制与工程实践，参考菜鸟教程 42 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "backend",
+  "language": "csharp",
+  "accent": "#d85b73",
+  "knowledgeBaseId": "computer-csharp",
+  "prompt": "围绕 C# 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "C#",
+    ".NET",
+    "异步编程"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "computer-swift",
+  "kind": "domain",
+  "name": "Swift 工程师",
+  "shortLabel": "Swif",
+  "description": "覆盖 Swift 语言基础、核心机制与工程实践，参考菜鸟教程 33 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "mobile",
+  "language": "swift",
+  "accent": "#7768d8",
+  "knowledgeBaseId": "computer-swift",
+  "prompt": "围绕 Swift 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "Swift",
+    "值语义",
+    "并发"
+  ]
+}

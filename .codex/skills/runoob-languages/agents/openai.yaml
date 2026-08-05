@@ -1,0 +1,4 @@
+interface:
+  display_name: "菜鸟教程语言库"
+  short_description: "同步、检索并引用菜鸟教程的全部编程语言章节内容"
+  default_prompt: "Use $runoob-languages to answer this programming-language question with relevant Runoob references."

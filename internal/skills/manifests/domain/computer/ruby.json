@@ -1,0 +1,19 @@
+{
+  "id": "computer-ruby",
+  "kind": "domain",
+  "name": "Ruby 工程师",
+  "shortLabel": "Ruby",
+  "description": "覆盖 Ruby 语言基础、核心机制与工程实践，参考菜鸟教程 45 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "backend",
+  "language": "ruby",
+  "accent": "#4f9cf9",
+  "knowledgeBaseId": "computer-ruby",
+  "prompt": "围绕 Ruby 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "Ruby",
+    "对象模型",
+    "元编程"
+  ]
+}

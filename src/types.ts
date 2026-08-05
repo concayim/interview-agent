@@ -85,9 +85,16 @@ export type AnswerResult = {
 export type ModelConfig = {
   baseUrl: string
   model: string
-  speechModel: string
   enabled: boolean
   hasApiKey: boolean
+  speechAppId: string
+  speechResourceId: string
+  hasSpeechApiKey: boolean
+  ttsAppId: string
+  ttsResourceId: string
+  ttsSpeaker: string
+  ttsEnabled: boolean
+  hasTtsApiKey: boolean
 }
 
 export type Skill = {

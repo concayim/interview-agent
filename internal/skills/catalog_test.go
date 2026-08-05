@@ -19,6 +19,11 @@ func TestLoadCatalog(t *testing.T) {
 			t.Fatalf("domain skill %s has no knowledge base", skill.ID)
 		}
 	}
+	for _, language := range []string{"assembly", "c", "cpp", "csharp", "dart", "golang", "java", "javascript", "julia", "kotlin", "lua", "perl", "php", "powershell", "python", "r", "ruby", "rust", "scala", "sql", "swift", "typescript", "vbscript", "verilog", "zig"} {
+		if _, ok := catalog.DomainByLanguage(language); !ok {
+			t.Errorf("missing synchronized language skill %s", language)
+		}
+	}
 	vera, ok := catalog.Interviewer("vera-challenger")
 	if !ok || vera.Prompt == "" {
 		t.Fatal("private interviewer prompt was not loaded")

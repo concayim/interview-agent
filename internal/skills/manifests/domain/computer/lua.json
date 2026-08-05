@@ -1,0 +1,19 @@
+{
+  "id": "computer-lua",
+  "kind": "domain",
+  "name": "Lua 工程师",
+  "shortLabel": "Lua",
+  "description": "覆盖 Lua 语言基础、核心机制与工程实践，参考菜鸟教程 23 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "language",
+  "language": "lua",
+  "accent": "#e09f3e",
+  "knowledgeBaseId": "computer-lua",
+  "prompt": "围绕 Lua 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "Lua",
+    "协程",
+    "元表"
+  ]
+}

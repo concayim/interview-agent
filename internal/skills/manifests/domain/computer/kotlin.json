@@ -1,0 +1,19 @@
+{
+  "id": "computer-kotlin",
+  "kind": "domain",
+  "name": "Kotlin 工程师",
+  "shortLabel": "Kotl",
+  "description": "覆盖 Kotlin 语言基础、核心机制与工程实践，参考菜鸟教程 18 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "mobile",
+  "language": "kotlin",
+  "accent": "#20b486",
+  "knowledgeBaseId": "computer-kotlin",
+  "prompt": "围绕 Kotlin 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "Kotlin",
+    "协程",
+    "空安全"
+  ]
+}

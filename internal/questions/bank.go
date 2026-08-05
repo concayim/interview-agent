@@ -47,6 +47,35 @@ var foundationBank = []domain.Question{
 	{ID: "foundation-06", Language: "foundation", Difficulty: "hard", Prompt: "设计一个限流器时，令牌桶和漏桶有什么差异？分布式部署还需考虑什么？", StandardAnswer: "令牌桶按速率补充令牌，允许在桶容量范围内突发；漏桶以较稳定速率流出，更强调平滑。分布式部署需明确全局还是单实例配额，处理时钟、原子扣减、热点、网络失败和配置动态下发；可用 Redis/Lua 或专用限流服务，但要设计失败时放行还是拒绝以及本地兜底。", KeyPoints: []string{"令牌桶/token bucket", "突发/burst", "漏桶/leaky bucket", "平滑/smooth", "原子/atomic", "失败策略/failure"}, Tags: []string{"算法", "限流", "分布式系统"}},
 }
 
+type topicKnowledge struct {
+	answer    string
+	keyPoints []string
+}
+
+var genericTopicKnowledge = map[string]topicKnowledge{
+	"指针":     {"C 指针保存内存地址，解引用访问目标对象；指针类型决定访问方式和步长。实际代码中常用指针传递可修改的数据或管理动态内存，必须防止空指针、越界和悬垂指针。", []string{"指针/内存地址", "解引用/dereference", "传递参数/动态内存", "空指针/越界/悬垂指针"}},
+	".NET":   {".NET 通过 CLR 执行托管代码，提供垃圾回收、类型安全和统一基础类库。C# 程序通常编译为中间语言，再由 JIT 或 AOT 生成本机代码；实际项目可用它构建 Web 服务、桌面程序和后台任务。", []string{"clr/公共语言运行时", "托管代码/managed", "垃圾回收/gc", "jit/aot/中间语言"}},
+	"异步编程":   {"异步编程让任务在等待 I/O 时交还执行权，并在操作完成后恢复，而不是阻塞线程。实际服务中可用 Future、Promise 或 async/await 组合网络请求；仍要处理错误传播、取消和超时，CPU 密集任务不能仅靠异步提速。", []string{"异步/async/await", "io/非阻塞/交还执行权", "future/promise", "取消/超时/错误传播"}},
+	"事件循环":   {"事件循环从任务队列中取出可执行任务，并在调用栈空闲时运行；异步 I/O 完成后把后续工作排入相应队列。JavaScript 中微任务通常先于下一轮宏任务执行，长时间同步代码会阻塞页面或服务。", []string{"事件循环/event loop", "任务队列/调用栈", "微任务/microtask", "阻塞/同步代码"}},
+	"多重派发":   {"Julia 的多重派发根据函数所有参数的运行时类型选择最具体的方法，而不只依据接收者类型。这使同一泛型函数能为不同类型组合提供专门实现，常用于数值算法和可扩展科学计算接口。", []string{"多重派发/multiple dispatch", "多个参数/参数类型", "最具体方法/方法选择", "数值算法/科学计算/扩展"}},
+	"协程":     {"协程是可挂起并恢复的轻量任务。Kotlin 协程通过挂起函数在等待时释放线程，并由调度器决定恢复位置；Lua 协程则以协作式 yield/resume 转移控制。它适合组织异步流程，但阻塞调用仍可能占住底层线程。", []string{"协程/coroutine", "挂起/suspend/yield", "恢复/resume/调度器", "异步流程/阻塞线程"}},
+	"正则表达式":  {"正则表达式用字符、量词、分组和边界描述文本模式。Perl 可直接进行匹配、捕获和替换，适合日志与文本清洗；需要注意贪婪匹配、转义以及复杂回溯带来的性能问题。", []string{"正则/regex", "匹配/捕获/分组", "替换/文本处理", "贪婪/回溯/性能"}},
+	"Web 开发": {"PHP Web 开发在服务端接收 HTTP 请求，执行业务逻辑并生成响应，常与路由、模板和数据库配合。生产 Web 应用需要参数校验、预处理语句防 SQL 注入、输出转义防 XSS，并正确管理会话和错误。", []string{"http/请求/响应", "路由/模板/数据库", "参数校验/预处理/sql注入", "输出转义/xss/会话"}},
+	"管道":     {"PowerShell 管道传递的是 .NET 对象而不只是文本，后续命令可以直接读取属性并继续筛选、排序或转换。实际自动化中常用 Get-*、Where-Object 和 Select-Object 组合处理系统资源，并留意远程对象序列化。", []string{"管道/pipeline", "对象/.net对象", "属性/筛选/排序/转换", "自动化/get-/where-object/select-object"}},
+	"数据分析":   {"R 的数据分析通常包括导入数据、清洗转换、统计建模和可视化。向量化运算与 data.frame/tibble 便于处理列式数据，实际项目还应处理缺失值、因子类型和可复现脚本。", []string{"数据导入/清洗", "向量化/vector", "data.frame/tibble", "统计建模/可视化/缺失值"}},
+	"对象模型":   {"Ruby 对象模型中几乎一切都是对象，方法调用会沿接收者的单例类、类和祖先链查找。模块可通过 include 或 prepend 复用行为；开放类和动态派发便于扩展，但过度猴子补丁会增加维护风险。", []string{"对象/object", "方法查找/祖先链", "模块/include/prepend", "开放类/动态派发/猴子补丁"}},
+	"生命周期":   {"Rust 生命周期描述引用有效期之间的约束，借用检查器据此保证引用不会比所借用的数据活得更久，从而避免悬垂引用。多数生命周期可由编译器推断；当函数返回借用数据且存在多个输入引用时，常需用生命周期参数表达输入与输出的借用关系。", []string{"生命周期/lifetime", "引用有效期/借用关系/输入输出引用", "悬垂引用/dangling", "返回借用/返回引用/借用数据"}},
+	"函数式编程":  {"Scala 的函数式编程强调不可变数据、纯函数和把函数作为值传递。map、flatMap 等组合子可声明式转换集合或 Option/Future；实际使用中应控制副作用，并通过类型表达失败与异步结果。", []string{"不可变/immutable", "纯函数/pure function", "高阶函数/map/flatmap", "副作用/option/future"}},
+	"查询优化":   {"SQL 查询优化先结合执行计划判断扫描方式、连接顺序和估算行数，再检查过滤条件与索引是否匹配。实际慢查询可通过合适的联合索引、减少无谓数据读取、更新统计信息并用真实负载验证改善。", []string{"执行计划/explain", "扫描/连接顺序/行数", "索引/联合索引", "慢查询/统计信息/验证"}},
+	"值语义":    {"Swift 的 struct、enum 和 Array 等类型采用值语义，赋值或传参在逻辑上得到独立值；标准库可用写时复制降低实际复制成本。值语义适合表达不共享的状态，并能减少别名导致的意外修改。", []string{"值语义/value semantics", "struct/enum/数组", "独立副本/赋值/传参", "写时复制/copy-on-write/别名"}},
+	"类型系统":   {"类型系统在编译期或运行时约束值与操作的兼容性。TypeScript 用结构化类型、联合类型和类型缩小描述 JavaScript 数据；PHP 等语言也可通过类型声明减少接口误用。类型只覆盖已建模的约束，外部输入仍需运行时校验。", []string{"类型系统/type system", "结构化类型/联合类型/类型缩小", "类型声明/接口", "运行时校验/外部输入"}},
+	"脚本自动化":  {"VBScript 脚本自动化可通过 Windows Script Host 调用文件系统、注册表和 COM 对象来处理 Windows 任务。脚本应显式处理错误、校验输入并限制权限；新项目还需评估 PowerShell 等更现代方案。", []string{"windows script host/wsh", "com对象/com", "文件系统/注册表", "错误处理/权限/powershell"}},
+	"时序逻辑":   {"Verilog 时序逻辑由时钟边沿驱动，寄存器保存跨周期状态；时序 always 块通常使用非阻塞赋值，组合逻辑则需完整赋值避免锁存器。实际设计还要处理复位、时序约束和仿真验证。", []string{"时钟/边沿", "寄存器/状态", "非阻塞赋值/nonblocking", "复位/时序约束/仿真"}},
+	"编译期":    {"Zig 把类型和值计算统一到 comptime，可在编译阶段生成专用代码、验证条件或构造类型。它能实现零运行时开销的泛型，但编译期逻辑仍应保持可读，并避免造成过长编译时间或难懂错误。", []string{"编译期/comptime", "代码生成/类型构造", "零运行时开销/泛型", "编译时间/可读性/错误"}},
+	"寄存器":    {"寄存器是处理器内部的高速存储位置，用于保存操作数、地址和控制状态。汇编指令在通用寄存器与内存间移动数据并执行运算；实际调用函数时还必须遵循 ABI 对参数、返回值和需保存寄存器的约定。", []string{"寄存器/register", "操作数/地址/状态", "指令/内存/运算", "abi/调用约定/参数/返回值"}},
+	"内存管理":   {"内存管理决定资源如何分配、拥有和释放。C 依赖 malloc/free 与清晰所有权，Zig 常由调用方显式传入分配器；实际程序需要处理分配失败、释放配对、对象生命周期以及越界或释放后使用。", []string{"内存分配/malloc/allocator", "释放/free", "所有权/生命周期", "分配失败/越界/use-after-free"}},
+}
+
 func Languages() []string { return []string{"golang", "java", "python", "cpp"} }
 
 func All() []domain.Question {
@@ -87,6 +116,52 @@ func SelectWithFoundation(language, difficulty string, count int, resumeKeywords
 	copy(result[insertAt+len(foundationQuestions):], result[insertAt:len(result)-len(foundationQuestions)])
 	copy(result[insertAt:], foundationQuestions)
 	return result, nil
+}
+
+// Generic returns a deterministic fallback bank for manifest-driven language
+// skills that do not yet have a hand-authored built-in question set.
+func Generic(language, skillName string, topics []string, difficulty string, count int) []domain.Question {
+	if count < 1 {
+		count = 5
+	}
+	if count > 10 {
+		count = 10
+	}
+	topic := func(index int, fallback string) string {
+		if index < len(topics) && strings.TrimSpace(topics[index]) != "" {
+			return topics[index]
+		}
+		return fallback
+	}
+	knowledge, ok := genericTopicKnowledge[topic(1, "核心机制")]
+	if !ok {
+		name := topic(1, "核心机制")
+		knowledge = topicKnowledge{answer: fmt.Sprintf("%s 是 %s 中的重要机制。回答应结合该语言说明它解决的问题、具体行为、适用代码场景与容易误用的边界。", name, skillName), keyPoints: []string{name, topic(0, skillName), "代码/项目/场景", "限制/风险/错误"}}
+	}
+	for index := range knowledge.keyPoints {
+		knowledge.keyPoints[index] = strings.ReplaceAll(knowledge.keyPoints[index], "/", "|")
+	}
+	primary := topic(0, skillName)
+	secondary := topic(1, "核心机制")
+	engineering := topic(2, "工程实践")
+	candidates := []domain.Question{
+		{ID: language + "-generic-easy-1", Language: language, Difficulty: "easy", Prompt: fmt.Sprintf("请介绍 %s 的核心特点，以及它最适合解决哪类问题。", skillName), StandardAnswer: fmt.Sprintf("%s 的核心能力可从 %s、%s 和 %s 三方面说明。它适合这些机制能够直接降低复杂度或提高安全性、性能与开发效率的场景；选择时还应结合生态、部署环境和团队经验。", primary, primary, secondary, engineering), KeyPoints: []string{primary, secondary, engineering, "生态|部署|团队|场景"}, Tags: []string{primary, "语言基础"}},
+		{ID: language + "-generic-easy-2", Language: language, Difficulty: "easy", Prompt: fmt.Sprintf("在 %s 中，变量、类型和控制流程有哪些容易被初学者忽略的规则？", skillName), StandardAnswer: fmt.Sprintf("学习 %s 时应结合实际代码理解变量作用域、类型或值的约束以及分支和循环的执行方式；%s 会影响相关代码的具体行为，%s 则决定工程中如何组织和验证这些规则。常见错误包括作用域误判、类型转换不当和遗漏异常分支。", primary, secondary, engineering), KeyPoints: []string{primary, secondary, "作用域|变量", "类型|分支|循环|错误"}, Tags: []string{primary, "语法基础"}},
+		{ID: language + "-generic-medium-1", Language: language, Difficulty: "medium", Prompt: fmt.Sprintf("请解释 %s 中「%s」的工作机制，并说明一个实际使用场景。", skillName, topic(1, "核心机制")), StandardAnswer: knowledge.answer, KeyPoints: append([]string(nil), knowledge.keyPoints...), Tags: []string{topic(0, skillName), topic(1, "核心机制")}},
+		{ID: language + "-generic-medium-2", Language: language, Difficulty: "medium", Prompt: fmt.Sprintf("使用 %s 设计一个可维护的小型项目时，你会如何组织代码、依赖、测试和错误处理？", skillName), StandardAnswer: fmt.Sprintf("%s 项目应围绕 %s 划分职责清晰的代码单元，通过生态原生方式管理依赖，并为 %s 的关键行为编写单元与集成测试。错误应保留上下文并在合适边界处理，同时为 %s 相关运行状态增加日志和指标。", primary, engineering, secondary, engineering), KeyPoints: []string{primary, engineering, "依赖|包|模块", "测试|错误|日志|指标"}, Tags: []string{primary, "工程实践"}},
+		{ID: language + "-generic-hard-1", Language: language, Difficulty: "hard", Prompt: fmt.Sprintf("一个 %s 生产服务出现性能退化，你会按什么顺序定位并优化？", skillName), StandardAnswer: fmt.Sprintf("先用指标和基准确认 %s 服务的退化范围，再结合 %s 与 %s 检查 CPU、内存、I/O、并发和依赖瓶颈。使用该语言生态的分析工具定位热点，修改后以相同负载和指标做回归验证。", primary, secondary, engineering), KeyPoints: []string{primary, secondary, engineering, "指标|基准|cpu|内存|io|验证"}, Tags: []string{primary, engineering}},
+		{ID: language + "-generic-hard-2", Language: language, Difficulty: "hard", Prompt: fmt.Sprintf("请比较 %s 与一种相近语言在「%s」上的设计取舍，并说明迁移时的主要风险。", skillName, topic(2, "工程实践")), StandardAnswer: fmt.Sprintf("比较 %s 与相近语言时，应具体分析 %s 和 %s 的语义差异，以及生态、性能和安全性的取舍。迁移需要评估依赖兼容性、工具链、团队能力和数据或接口边界，并用分阶段替换与回归测试控制风险。", primary, secondary, engineering), KeyPoints: []string{primary, secondary, engineering, "兼容|工具链|迁移|回归"}, Tags: []string{primary, "语言对比"}},
+	}
+	result := make([]domain.Question, 0, count)
+	for _, question := range candidates {
+		if difficulty == "" || difficulty == "mixed" || question.Difficulty == difficulty {
+			result = append(result, question)
+		}
+	}
+	if len(result) > count {
+		result = result[:count]
+	}
+	return result
 }
 
 func selectFrom(source []domain.Question, language, difficulty string, count int, resumeKeywords []string) ([]domain.Question, error) {

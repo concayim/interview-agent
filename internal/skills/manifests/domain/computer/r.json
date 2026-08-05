@@ -1,0 +1,19 @@
+{
+  "id": "computer-r",
+  "kind": "domain",
+  "name": "R 工程师",
+  "shortLabel": "R",
+  "description": "覆盖 R 语言基础、核心机制与工程实践，参考菜鸟教程 29 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "data",
+  "language": "r",
+  "accent": "#5f8d4e",
+  "knowledgeBaseId": "computer-r",
+  "prompt": "围绕 R 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "R",
+    "数据分析",
+    "统计计算"
+  ]
+}

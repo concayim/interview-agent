@@ -6,6 +6,7 @@ import (
 
 	"interview-agent/internal/agent"
 	"interview-agent/internal/domain"
+	"interview-agent/internal/questions"
 )
 
 type stubEvaluator struct{}
@@ -59,6 +60,41 @@ func TestLocalFallbackWhenModelUnavailable(t *testing.T) {
 	}
 	if result.Evaluation == nil || result.Evaluation.Source != "local" {
 		t.Fatalf("expected local fallback, got %#v", result.Evaluation)
+	}
+}
+
+func TestSynchronizedSkillStartsWithGenericLocalQuestions(t *testing.T) {
+	service := NewService(failingEvaluator{})
+	session, err := service.Start(StartInput{DomainSkillID: "computer-rust", Difficulty: "mixed", QuestionCount: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.DomainSkillName != "Rust 工程师" || session.Total != 5 || session.QuestionSource != "built-in" {
+		t.Fatalf("unexpected synchronized skill session %#v", session)
+	}
+	if session.CurrentQuestion == nil || session.CurrentQuestion.ID != "rust-generic-easy-1" {
+		t.Fatalf("expected generic Rust fallback question, got %#v", session.CurrentQuestion)
+	}
+}
+
+func TestRustLifetimeAnswerMatchesConcreteLocalKeyPoints(t *testing.T) {
+	questions := questions.Generic("rust", "Rust 工程师", []string{"所有权", "生命周期", "并发安全"}, "medium", 1)
+	if len(questions) != 1 {
+		t.Fatalf("expected one Rust question, got %d", len(questions))
+	}
+	answer := "生命周期用于描述引用有效期之间的约束，编译器据此避免悬垂引用；函数返回借用数据时需要用生命周期参数表达输入输出引用关系。"
+	evaluation := localEvaluate(questions[0], answer, agent.ErrNotConfigured, "echo-coach")
+	if evaluation.Score < 80 {
+		t.Fatalf("expected a strong Rust lifetime answer to score at least 80, got %d: %s", evaluation.Score, evaluation.Summary)
+	}
+}
+
+func TestRustLifetimeGenericWordingDoesNotEarnScenarioPoint(t *testing.T) {
+	generated := questions.Generic("rust", "Rust 工程师", []string{"所有权", "生命周期", "并发安全"}, "medium", 1)
+	answer := "生命周期是 Rust 的重要机制，它有工作机制、边界条件和实际场景，函数返回时也可能用到。"
+	evaluation := localEvaluate(generated[0], answer, agent.ErrNotConfigured, "echo-coach")
+	if evaluation.Score > 40 {
+		t.Fatalf("generic wording should not match concrete borrowing concepts, got %d: %s", evaluation.Score, evaluation.Summary)
 	}
 }
 

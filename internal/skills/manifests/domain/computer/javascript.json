@@ -1,0 +1,19 @@
+{
+  "id": "computer-javascript",
+  "kind": "domain",
+  "name": "JavaScript 工程师",
+  "shortLabel": "JS",
+  "description": "覆盖 JavaScript 语言基础、核心机制与工程实践，参考菜鸟教程 85 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "frontend",
+  "language": "javascript",
+  "accent": "#5f8d4e",
+  "knowledgeBaseId": "computer-javascript",
+  "prompt": "围绕 JavaScript 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "JavaScript",
+    "事件循环",
+    "异步编程"
+  ]
+}

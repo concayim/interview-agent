@@ -211,36 +211,35 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 这类 `intent` 可能为 `hint | clarify | repeat | off_topic | smalltalk`，不会返回 `evaluation`。其中 `off_topic` 与 `smalltalk` 由大模型意图识别处理，用于理解与当前题不直接相关的输入，并把对话拉回面试。最后一题的正式回答响应中 `completed` 为 `true`，并附带完整 `report`。`source` 为 `llm` 或 `local`。
 
-### `POST /speech/transcriptions`
+### `GET /speech/realtime`
 
-`Content-Type: multipart/form-data`，字段名为 `audio`，可选字段 `language` 为 `zh`、`en`、`zh-CN` 或 `en-US`。该接口使用当前模型配置中的 `Base URL`、`API Key` 与 `Speech Model` 调用 OpenAI-compatible `/audio/transcriptions`，用于 Electron 不支持 Web Speech API 时的录音转写兜底。单段语音最大 12 MB。
+WebSocket 实时语音接口。查询参数 `language` 支持 `zh-CN` 和 `en-US`；由于浏览器 WebSocket 不能设置自定义 Header，本地访问令牌通过 `token` 查询参数发送。服务端不会把火山凭据返回给前端。
 
-响应 `200`：
+连接成功后服务端先发送：
 
 ```json
-{ "text": "转写后的回答文本" }
+{ "type": "ready" }
 ```
 
-需要在模型设置中填写 `Speech Model`；未填写时返回 `400`，上游模型不可用或不支持音频时返回 `502`，错误信息会优先提取服务商返回的 `error.message` 或 `message`。
+客户端随后发送 16 kHz、16-bit、单声道、小端 PCM 二进制帧。结束录音时发送 `{ "type": "stop" }`。服务端返回的文本事件为：
 
-### `POST /speech/transcriptions/stream`
-
-请求体同 `/speech/transcriptions`。服务端会向上游 `/audio/transcriptions` 追加 `stream=true`，并以 `text/event-stream` 返回统一的流式事件。前端语音兜底默认使用该接口，把增量文本写入回答框。
-
-事件格式：
-
-```text
-event: delta
-data: {"text":"增量文字"}
-
-event: done
-data: {"text":"完整文本，可为空"}
-
-event: error
-data: {"error":"可读的错误信息"}
+```json
+{ "type": "partial", "text": "正在识别的完整文本" }
+{ "type": "final", "text": "最终文本" }
+{ "type": "error", "error": "可读的错误信息" }
 ```
 
-`delta` 是前端写入回答框的主要增量；`done` 只表示结束，`text` 可能为空。服务端会兼容 `delta`、`choices[].delta.content`、`text`、`transcript` 等常见上游字段，并支持 LF / CRLF 事件分隔。若上游不支持 SSE 但返回普通 JSON `{ "text": "..." }`，服务端会发送一次 `delta` 后再发送 `done`。若上游因不支持 `stream=true` 返回 400 / 404 / 422，服务端会自动重试普通转写并以同样的 SSE 格式返回最终文本。
+本地服务通过火山 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` 接口代理识别；默认 Resource ID 是 `volc.bigasr.sauc.duration`。旧版控制台使用 `X-Api-App-Key`（App ID）和 `X-Api-Access-Key`（Access Token），新版控制台使用 `X-Api-Key`。
+
+### `POST /speech/synthesis`
+
+将面试官文本合成为 MP3。请求：
+
+```json
+{ "text": "请介绍一下你最近负责的项目。" }
+```
+
+成功响应为 `audio/mpeg`。服务端通过豆包 `POST /api/v3/tts/unidirectional` 获取流式 NDJSON，解码其中的 Base64 音频并拼接返回。TTS 使用独立的 API Key/App ID、Resource ID 和音色 ID，凭据不返回前端；单次文本上限 3000 字。
 
 ### `GET /interviews/{id}/report`
 
@@ -288,9 +287,16 @@ API Key 永远不会返回。
 {
   "baseUrl": "https://api.example.com/v1",
   "model": "model-name",
-  "speechModel": "whisper-1",
   "enabled": true,
-  "hasApiKey": true
+  "hasApiKey": true,
+  "speechAppId": "123456789",
+  "speechResourceId": "volc.bigasr.sauc.duration",
+  "hasSpeechApiKey": true,
+  "ttsAppId": "123456789",
+  "ttsResourceId": "seed-tts-2.0",
+  "ttsSpeaker": "音色 ID",
+  "ttsEnabled": true,
+  "hasTtsApiKey": true
 }
 ```
 
@@ -301,16 +307,28 @@ API Key 永远不会返回。
   "apiKey": "sk-...",
   "baseUrl": "https://api.example.com/v1",
   "model": "model-name",
-  "speechModel": "whisper-1",
   "enabled": true,
-  "clearApiKey": false
+  "clearApiKey": false,
+  "speechApiKey": "...",
+  "speechAppId": "123456789",
+  "speechResourceId": "volc.bigasr.sauc.duration",
+  "clearSpeechApiKey": false,
+  "ttsApiKey": "...",
+  "ttsAppId": "123456789",
+  "ttsResourceId": "seed-tts-2.0",
+  "ttsSpeaker": "音色 ID",
+  "ttsEnabled": true,
+  "clearTtsApiKey": false
 }
 ```
 
 - `apiKey` 留空且 `clearApiKey=false` 时保留已有 Key。
 - `clearApiKey=true` 时清除 Key。
 - 启用模型时必须已有或提供 API Key，并填写 `model`。
-- `speechModel` 仅用于 `/speech/transcriptions` 的录音兜底转写；不填写时不影响出题、意图识别和点评，但录音转写会返回配置提示。
+- `speechApiKey` 留空且 `clearSpeechApiKey=false` 时保留已有火山语音 API Key。
+- `speechResourceId` 应与火山控制台开通的流式语音识别产品和计费方式一致。
+- TTS 凭据与 ASR 独立保存；`ttsApiKey` 留空且 `clearTtsApiKey=false` 时保留已有值。
+- `ttsResourceId` 与 `ttsSpeaker` 必须属于同一版本的豆包 TTS 产品。
 
 响应结构同 `GET`。
 

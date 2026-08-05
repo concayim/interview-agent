@@ -295,6 +295,12 @@ func (s *Service) selectQuestions(input StartInput, domainSkill skills.Skill, ke
 		}
 	}
 	selected, err := questions.SelectWithFoundation(input.Language, input.Difficulty, input.QuestionCount, keywords, input.IncludeFoundation)
+	if err != nil {
+		selected = questions.Generic(input.Language, domainSkill.Name, domainSkill.Topics, input.Difficulty, input.QuestionCount)
+		if len(selected) > 0 {
+			return selected, "built-in", nil
+		}
+	}
 	return selected, "built-in", err
 }
 
@@ -415,7 +421,11 @@ func localEvaluate(question domain.Question, answer string, modelErr error, inte
 	missing := make([]string, 0)
 	for _, group := range question.KeyPoints {
 		found := false
-		for _, term := range strings.Split(group, "/") {
+		separator := "/"
+		if strings.Contains(group, "|") {
+			separator = "|"
+		}
+		for _, term := range strings.Split(group, separator) {
 			term = strings.TrimSpace(strings.ToLower(term))
 			if term != "" && strings.Contains(lower, term) {
 				found = true

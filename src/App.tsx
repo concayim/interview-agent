@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, Dispatch, SetStateAction } from 'react'
 import {
   ArrowLeft,
@@ -25,6 +25,7 @@ import {
   Newspaper,
   PlayCircle,
   RefreshCw,
+  Search,
   Send,
   Settings2,
   ShieldCheck,
@@ -35,31 +36,25 @@ import {
   UserRound,
   Video,
   VideoOff,
+  Volume2,
+  VolumeX,
   X,
   Zap,
 } from 'lucide-react'
 import { api } from './api'
-import type { Difficulty, Evaluation, KnowledgeBase, Language, LearningResource, ModelConfig, QAItem, Question, Report, Resume, Session, SkillCatalog } from './types'
+import { startRealtimeSpeech } from './speech'
+import type { RealtimeSpeechSession } from './speech'
+import { InterviewVoicePlayer } from './tts'
+import { deriveAvatarMode } from './avatar-state'
+import type { Difficulty, Evaluation, KnowledgeBase, Language, LearningResource, ModelConfig, QAItem, Question, Report, Resume, Session, Skill, SkillCatalog } from './types'
 
 type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
 type IntentMessage = { id: string; role: 'candidate' | 'assistant'; text: string; intent: string }
 type Turn = { question: Question; answer: string; evaluation: Evaluation; sideMessages?: IntentMessage[] }
 type Toast = { type: 'success' | 'error'; message: string }
-type SpeechMode = 'idle' | 'recognizing' | 'recording' | 'transcribing'
-type SpeechRecognitionCtor = new () => SpeechRecognition
+type SpeechMode = 'idle' | 'connecting' | 'recording' | 'finalizing'
 
-interface SpeechRecognition extends EventTarget {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  start: () => void
-  stop: () => void
-  onresult: ((event: SpeechRecognitionEvent) => void) | null
-  onerror: (() => void) | null
-  onend: (() => void) | null
-}
-
-type SpeechRecognitionEvent = { results: ArrayLike<{ 0: { transcript: string } }> }
+const AvatarStage = lazy(() => import('./AvatarStage').then((module) => ({ default: module.AvatarStage })))
 
 const languageOptions: { value: Language; label: string; short: string; caption: string; color: string }[] = [
   { value: 'golang', label: 'Golang', short: 'Go', caption: '并发 · Runtime · 工程化', color: '#6bd7e8' },
@@ -82,7 +77,7 @@ function App() {
   const [session, setSession] = useState<Session>()
   const [report, setReport] = useState<Report>()
   const [turns, setTurns] = useState<Turn[]>([])
-  const [modelConfig, setModelConfig] = useState<ModelConfig>({ baseUrl: '', model: '', speechModel: '', enabled: false, hasApiKey: false })
+  const [modelConfig, setModelConfig] = useState<ModelConfig>({ baseUrl: '', model: '', enabled: false, hasApiKey: false, speechAppId: '', speechResourceId: '', hasSpeechApiKey: false, ttsAppId: '', ttsResourceId: '', ttsSpeaker: '', ttsEnabled: false, hasTtsApiKey: false })
   const [catalog, setCatalog] = useState<SkillCatalog>()
   const [toast, setToast] = useState<Toast>()
 
@@ -124,7 +119,7 @@ function App() {
       <main className="app-main">
         {screen === 'setup' && <Setup catalog={catalog} resume={resume} onResume={setResume} onStart={start} modelReady={modelConfig.enabled && modelConfig.hasApiKey} notify={setToast} />}
         {screen === 'interview' && session && (
-          <InterviewScreen session={session} turns={turns} setTurns={setTurns} setSession={setSession} onFinish={finish} onBack={restart} notify={setToast} />
+          <InterviewScreen session={session} turns={turns} setTurns={setTurns} setSession={setSession} onFinish={finish} onBack={restart} notify={setToast} ttsEnabled={modelConfig.ttsEnabled && modelConfig.hasTtsApiKey && Boolean(modelConfig.ttsSpeaker)} />
         )}
         {screen === 'review' && report && <ReviewScreen report={report} onRestart={restart} />}
         {screen === 'learning' && <LearningPage catalog={catalog} notify={setToast} />}
@@ -162,6 +157,76 @@ function Sidebar({ screen, modelReady, onHome, onLearning, onKnowledge, onSettin
   )
 }
 
+function SkillSelect({ options, value, onChange, kind, placeholder }: { options: Skill[]; value: string; onChange: (value: string) => void; kind: 'domain' | 'interviewer'; placeholder: string }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const selected = options.find((skill) => skill.id === value)
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filtered = options.filter((skill) => [skill.name, skill.shortLabel, skill.description, skill.id, ...(skill.topics ?? []), ...(skill.evaluationFocus ?? [])]
+    .some((text) => text.toLocaleLowerCase().includes(normalizedQuery)))
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    setQuery('')
+    setActiveIndex(-1)
+    window.requestAnimationFrame(() => searchRef.current?.focus())
+  }, [open])
+
+  const choose = (skill: Skill) => {
+    onChange(skill.id)
+    setOpen(false)
+  }
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') { setOpen(false); return }
+    if (event.key === 'ArrowDown') { event.preventDefault(); setActiveIndex((index) => Math.min(index + 1, filtered.length - 1)); return }
+    if (event.key === 'ArrowUp') { event.preventDefault(); setActiveIndex((index) => Math.max(index - 1, 0)); return }
+    if (event.key === 'Enter' && filtered[activeIndex]) { event.preventDefault(); choose(filtered[activeIndex]) }
+  }
+
+  return (
+    <div className={`skill-select ${open ? 'open' : ''}`} ref={rootRef} style={{ '--selected-skill-color': selected?.accent ?? '#6ee7c2' } as CSSProperties}>
+      <button className="skill-select-trigger" type="button" onClick={() => setOpen((current) => !current)} aria-haspopup="listbox" aria-expanded={open}>
+        {selected ? (
+          <>
+            <span className="skill-select-icon">{kind === 'domain' ? selected.shortLabel : <Bot size={18} />}</span>
+            <span className="skill-select-copy"><strong>{selected.name}</strong><small>{kind === 'domain' ? selected.topics?.slice(0, 3).join(' · ') : selected.description}</small></span>
+          </>
+        ) : <span className="skill-select-placeholder">{placeholder}</span>}
+        <ChevronDown className="skill-select-chevron" size={18} />
+      </button>
+      {open && (
+        <div className="skill-select-menu">
+          <label className="skill-search"><Search size={16} /><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0) }} onKeyDown={handleSearchKeyDown} placeholder="搜索名称、主题或关键字" aria-label="搜索 Skill" /></label>
+          <div className="skill-options" role="listbox">
+            {filtered.map((skill, index) => (
+              <button key={skill.id} type="button" role="option" aria-selected={skill.id === value} className={`${skill.id === value ? 'selected' : ''} ${index === activeIndex ? 'active' : ''}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(skill)} style={{ '--skill-color': skill.accent } as CSSProperties}>
+                <span className="skill-option-icon">{kind === 'domain' ? skill.shortLabel : <Bot size={17} />}</span>
+                <span><strong>{skill.name}</strong><small>{kind === 'domain' ? skill.topics?.join(' · ') : skill.description}</small>{kind === 'interviewer' && <em>{skill.evaluationFocus?.join(' · ')}</em>}</span>
+                {skill.id === value && <Check size={16} />}
+              </button>
+            ))}
+            {!filtered.length && <div className="skill-empty"><Search size={20} /><strong>没有匹配的 Skill</strong><span>换一个关键字试试</span></div>}
+          </div>
+          <div className="skill-result-count">{normalizedQuery ? `找到 ${filtered.length} 个结果` : `共 ${options.length} 个 Skill`}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { catalog?: SkillCatalog; resume?: Resume; onResume: (value: Resume) => void; onStart: (value: Session) => void; modelReady: boolean; notify: (value: Toast) => void }) {
   const [candidateName, setCandidateName] = useState('')
   const [industry, setIndustry] = useState('computer')
@@ -181,6 +246,15 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
     if (difficulty !== 'mixed') setQuestionCount(2)
     else if (questionCount === 2) setQuestionCount(5)
   }, [difficulty])
+
+  useEffect(() => {
+    const available = (catalog?.domains ?? []).filter((skill) => skill.industry === industry && skill.language !== 'foundation')
+    if (available.length && !available.some((skill) => skill.id === domainSkillId)) setDomainSkillId(available[0].id)
+  }, [catalog, industry, domainSkillId])
+
+  useEffect(() => {
+    if (catalog?.interviewers.length && !catalog.interviewers.some((skill) => skill.id === interviewerSkillId)) setInterviewerSkillId(catalog.interviewers[0].id)
+  }, [catalog, interviewerSkillId])
 
   const upload = async (file?: File) => {
     if (!file) return
@@ -229,16 +303,12 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
         <section className="panel direction-panel">
           <div className="section-heading"><span className="heading-icon violet"><Code2 size={19} /></span><div><h2>选择行业 / 领域 Skill</h2><p>每个 Skill 绑定独立知识库，后续可直接扩展新行业</p></div></div>
           <div className="industry-tabs">{(catalog?.industries ?? [{ id: 'computer', name: '计算机' }]).map((option) => <button key={option.id} className={industry === option.id ? 'selected' : ''} onClick={() => setIndustry(option.id)}>{option.name}</button>)}<span>更多行业 Skill 敬请期待</span></div>
-          <div className="language-grid">{domainSkills.map((option) => (
-            <button key={option.id} className={`language-card ${domainSkillId === option.id ? 'selected' : ''}`} onClick={() => setDomainSkillId(option.id)} style={{ '--language-color': option.accent } as CSSProperties}>
-              <span className="language-badge">{option.shortLabel}</span><span><strong>{option.name}</strong><small>{option.topics?.slice(0, 3).join(' · ')}</small></span>{domainSkillId === option.id && <Check className="language-check" size={15} />}
-            </button>
-          ))}</div>
+          <SkillSelect options={domainSkills} value={domainSkillId} onChange={setDomainSkillId} kind="domain" placeholder="选择领域 Skill" />
         </section>
 
         <section className="panel interviewer-panel">
           <div className="section-heading"><span className="heading-icon mint"><Bot size={19} /></span><div><h2>选择面试官风格 Skill</h2><p>同一道题，不同面试官会用不同的评价重点和反馈语气</p></div></div>
-          <div className="interviewer-grid">{(catalog?.interviewers ?? []).map((skill) => <button key={skill.id} className={interviewerSkillId === skill.id ? 'selected' : ''} onClick={() => setInterviewerSkillId(skill.id)} style={{ '--skill-color': skill.accent } as CSSProperties}><span className="interviewer-avatar"><Bot size={18} /></span><strong>{skill.name}</strong><p>{skill.description}</p><small>{skill.evaluationFocus?.join(' · ')}</small>{interviewerSkillId === skill.id && <Check className="skill-check" size={15} />}</button>)}</div>
+          <SkillSelect options={catalog?.interviewers ?? []} value={interviewerSkillId} onChange={setInterviewerSkillId} kind="interviewer" placeholder="选择面试官 Skill" />
         </section>
 
         <section className="panel preferences-panel">
@@ -263,7 +333,7 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
   )
 }
 
-function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBack, notify }: { session: Session; turns: Turn[]; setTurns: Dispatch<SetStateAction<Turn[]>>; setSession: (value: Session) => void; onFinish: (report: Report) => void; onBack: () => void; notify: (value: Toast) => void }) {
+function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBack, notify, ttsEnabled }: { session: Session; turns: Turn[]; setTurns: Dispatch<SetStateAction<Turn[]>>; setSession: (value: Session) => void; onFinish: (report: Report) => void; onBack: () => void; notify: (value: Toast) => void; ttsEnabled: boolean }) {
   const [answer, setAnswer] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitStage, setSubmitStage] = useState('')
@@ -272,13 +342,17 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
   const [cameraStream, setCameraStream] = useState<MediaStream>()
   const [cameraError, setCameraError] = useState('')
   const [speechMode, setSpeechMode] = useState<SpeechMode>('idle')
+  const [voiceMuted, setVoiceMuted] = useState(false)
+  const [avatarSpeaking, setAvatarSpeaking] = useState(false)
   const [questionStartedAt, setQuestionStartedAt] = useState(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
+  const realtimeSpeechRef = useRef<RealtimeSpeechSession | null>(null)
+  const speechConnectAbortRef = useRef<AbortController | null>(null)
+  const speechModeRef = useRef<SpeechMode>('idle')
+  const voicePlayerRef = useRef(new InterviewVoicePlayer({ onPlaybackChange: setAvatarSpeaking }))
+  const lastSpokenRef = useRef('')
   const speechBaseAnswerRef = useRef('')
   const speechDraftRef = useRef('')
   useEffect(() => { const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)), 1000); return () => clearInterval(timer) }, [session.startedAt])
@@ -296,10 +370,31 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     return () => { active = false; localStream?.getTracks().forEach((track) => track.stop()) }
   }, [session.videoEnabled])
   useEffect(() => { if (videoRef.current && cameraStream) videoRef.current.srcObject = cameraStream }, [cameraStream])
+  useEffect(() => { speechModeRef.current = speechMode }, [speechMode])
+  useEffect(() => () => { speechConnectAbortRef.current?.abort(); realtimeSpeechRef.current?.stop() }, [])
+  useEffect(() => () => voicePlayerRef.current.stop(), [])
+  const currentAssistantMessage = sideMessages.filter((message) => message.role === 'assistant').at(-1)
+  const currentVoice = currentAssistantMessage?.text || session.currentQuestion?.prompt
+  const currentVoiceId = currentAssistantMessage?.id || session.currentQuestion?.id
+  const avatarMode = deriveAvatarMode({ speechMode, speaking: avatarSpeaking, submitting })
+  const speak = (text?: string, id?: string, force = false) => {
+    if (speechModeRef.current !== 'idle' || !ttsEnabled || voiceMuted || !text || !id || (!force && lastSpokenRef.current === id)) return
+    lastSpokenRef.current = id
+    voicePlayerRef.current.speak(text).catch((error) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      notify({ type: 'error', message: error instanceof Error ? error.message : '面试官语音播放失败' })
+    })
+  }
+  useEffect(() => {
+    const opening = `你好，${session.candidateName}。${session.interviewerOpening}${session.currentQuestion ? `。第一题，${session.currentQuestion.prompt}` : ''}`
+    const firstID = session.currentQuestion ? `opening:${session.currentQuestion.id}` : `opening:${session.id}`
+    if (turns.length === 0 && sideMessages.length === 0) speak(opening, firstID)
+    else speak(currentVoice, currentVoiceId)
+  }, [currentVoiceId, currentVoice, session.currentQuestion, sideMessages.length, turns.length, ttsEnabled, voiceMuted, speechMode])
 
   const submit = async () => {
     const trimmed = answer.trim()
-    if (!trimmed || submitting || !session.currentQuestion) return
+    if (!trimmed || submitting || speechMode !== 'idle' || !session.currentQuestion) return
     setSubmitting(true)
     setSubmitStage('理解你的意图')
     try {
@@ -321,9 +416,11 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       setTurns((previous) => [...previous, { question, answer: trimmed, evaluation, sideMessages }])
       setSideMessages([])
       if (result.completed && result.report) {
+        speak(`${evaluation.summary}。本场面试已经完成，完整复盘已为你整理好。`, `complete:${question.id}`)
         setReadyReport(result.report)
         setSession({ ...session, current: result.current, status: 'completed', currentQuestion: undefined })
       } else if (result.nextQuestion) {
+        speak(`${evaluation.summary}。下一题，${result.nextQuestion.prompt}`, result.nextQuestion.id)
         setSession({ ...session, current: result.current, currentQuestion: result.nextQuestion })
         setQuestionStartedAt(Date.now())
       }
@@ -332,81 +429,50 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     } finally { setSubmitting(false); setSubmitStage('') }
   }
 
-  const toggleSpeech = () => {
-    if (speechMode === 'recognizing') {
-      recognitionRef.current?.stop()
-      setSpeechMode('idle')
-      return
-    }
+  const toggleSpeech = async () => {
     if (speechMode === 'recording') {
-      mediaRecorderRef.current?.stop()
+
+      speechModeRef.current = 'finalizing'
+      setSpeechMode('finalizing')
+      realtimeSpeechRef.current?.stop()
       return
     }
-    if (speechMode === 'transcribing') {
-      return
-    }
-    const Recognition = (window as typeof window & { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition ?? (window as typeof window & { webkitSpeechRecognition?: SpeechRecognitionCtor }).webkitSpeechRecognition
-    if (!Recognition) {
-      startRecordingFallback()
-      return
-    }
-    const recognition = new Recognition()
-    recognition.lang = session.speechLanguage || 'zh-CN'
-    recognition.interimResults = true
-    recognition.continuous = true
-    recognition.onresult = (event) => {
-      const text = Array.from(event.results).map((result) => result[0].transcript).join('')
-      speechDraftRef.current = text.trim()
-      setAnswer(mergeSpeechText(speechBaseAnswerRef.current, speechDraftRef.current))
-    }
-    recognition.onerror = () => {
-      setSpeechMode('idle')
-      if (speechDraftRef.current) {
-        notify({ type: 'error', message: '语音识别已中断，已保留识别到的文字' })
-        return
-      }
-      startRecordingFallback()
-    }
-    recognition.onend = () => setSpeechMode('idle')
-    recognitionRef.current = recognition
+    if (speechMode !== 'idle' || submitting) return
+    voicePlayerRef.current.stop()
     speechBaseAnswerRef.current = answer.trimEnd()
     speechDraftRef.current = ''
-    setSpeechMode('recognizing')
-    try { recognition.start() } catch { setSpeechMode('idle'); startRecordingFallback() }
-  }
-
-  const startRecordingFallback = async () => {
+    speechModeRef.current = 'connecting'
+    setSpeechMode('connecting')
+    const connectAbort = new AbortController()
+    speechConnectAbortRef.current = connectAbort
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : undefined })
-      audioChunksRef.current = []
-      recorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data) }
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop())
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
-        if (!blob.size) { setSpeechMode('idle'); notify({ type: 'error', message: '没有录到声音，请再试一次' }); return }
-        setSpeechMode('transcribing')
-        try {
-          const baseAnswer = speechBaseAnswerRef.current
-          let streamedText = ''
-          const result = await api.transcribeSpeechStream(blob, session.speechLanguage || 'zh-CN', (_delta, fullText) => {
-            streamedText = fullText
-            setAnswer(mergeSpeechText(baseAnswer, fullText))
-          })
-          if (!streamedText && result.text) setAnswer(mergeSpeechText(baseAnswer, result.text))
-        } catch (error) {
-          notify({ type: 'error', message: error instanceof Error ? error.message : '语音转写失败，请检查模型是否支持音频转写' })
-        } finally {
+      const speechSession = await startRealtimeSpeech(session.speechLanguage || 'zh-CN', (text, final) => {
+        speechDraftRef.current = text.trim()
+        setAnswer(mergeSpeechText(speechBaseAnswerRef.current, speechDraftRef.current))
+        if (final) {
+          realtimeSpeechRef.current = null
+          speechModeRef.current = 'idle'
           setSpeechMode('idle')
         }
+      }, (error) => {
+        realtimeSpeechRef.current = null
+        speechModeRef.current = 'idle'
+        setSpeechMode('idle')
+        notify({ type: 'error', message: error.message })
+      }, connectAbort.signal)
+      if (connectAbort.signal.aborted) {
+        speechSession.stop()
+        return
       }
-      mediaRecorderRef.current = recorder
-      speechBaseAnswerRef.current = answer.trimEnd()
+      realtimeSpeechRef.current = speechSession
+      speechConnectAbortRef.current = null
+      speechModeRef.current = 'recording'
       setSpeechMode('recording')
-      recorder.start()
     } catch (error) {
+      speechConnectAbortRef.current = null
+      speechModeRef.current = 'idle'
       setSpeechMode('idle')
-      notify({ type: 'error', message: error instanceof Error ? `无法访问麦克风：${error.message}` : '无法访问麦克风' })
+      if (!(error instanceof DOMException && error.name === 'AbortError')) notify({ type: 'error', message: error instanceof Error ? error.message : '无法启动实时语音识别' })
     }
   }
 
@@ -416,7 +482,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         <button className="icon-button" onClick={onBack} title="退出本场面试"><ArrowLeft size={19} /></button>
         <div className="interview-title"><span className="live-dot" /><div><strong>{session.domainSkillName || languageLabel(session.language)}</strong><small>{session.candidateName} · {difficultyLabel(session.difficulty)} · {session.interviewerName}</small></div></div>
         <div className="progress-block"><div><span>进度</span><strong>{Math.min(session.current + 1, session.total)} / {session.total}</strong></div><div className="progress-track"><span style={{ width: `${Math.min(100, (session.current / session.total) * 100)}%` }} /></div></div>
-        <div className="timer"><Clock3 size={16} />{formatTime(elapsed)}</div>
+        <div className="timer"><Clock3 size={16} />{formatTime(elapsed)}</div><button className={`voice-control ${voiceMuted || !ttsEnabled ? 'muted' : ''}`} type="button" title={!ttsEnabled ? '请先配置豆包 TTS' : voiceMuted ? '开启面试官语音' : '关闭面试官语音'} disabled={!ttsEnabled || speechMode !== 'idle'} onClick={() => { voicePlayerRef.current.stop(); setVoiceMuted((value) => !value) }}>{voiceMuted || !ttsEnabled ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
       </header>
       <div className="interview-layout">
         <section className="conversation">
@@ -425,7 +491,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
           {session.currentQuestion && (
             <div className="question-message">
               <div className="message-avatar"><Bot size={18} /></div>
-              <div className="message-content"><div className="message-meta"><strong>{session.interviewerName}</strong><span>第 {session.current + 1} 题</span></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
+              <div className="message-content"><div className="message-meta"><strong>{session.interviewerName}</strong><span>第 {session.current + 1} 题</span><button className="message-audio" type="button" title="重播题目" disabled={!ttsEnabled || voiceMuted || speechMode !== 'idle'} onClick={() => speak(session.currentQuestion?.prompt, `replay:${session.currentQuestion?.id}:${Date.now()}`, true)}><Volume2 size={14} /></button></div><p>{session.currentQuestion.prompt}</p><div className="question-tags">{session.currentQuestion.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
             </div>
           )}
           {sideMessages.map((message) => <IntentBubble key={message.id} message={message} interviewerName={session.interviewerName} />)}
@@ -433,14 +499,12 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
           <div ref={bottomRef} />
         </section>
         <aside className="interview-aside">
-          <div className="aside-card"><span className="aside-label">回答结构</span><div className="answer-framework"><div><span>1</span><p><strong>先讲结论</strong><small>一句话回应核心问题</small></p></div><div><span>2</span><p><strong>拆解原理</strong><small>说清机制与边界</small></p></div><div><span>3</span><p><strong>联系实践</strong><small>用项目或反例收尾</small></p></div></div></div>
-          <div className="aside-card quiet"><BrainCircuit size={18} /><p>{session.questionSource === 'model' ? '本场题目由已配置模型动态生成。' : '模型题目生成不可用，本场已使用内置题库。'}</p></div>
-          {session.videoEnabled && <div className="video-card">{cameraStream ? <video ref={videoRef} autoPlay muted playsInline /> : <div><VideoOff size={21} /><p>{cameraError || '正在请求摄像头权限…'}</p></div>}<span>{session.speechLanguage === 'en-US' ? 'English interview' : '中文面试'} · CAM++ 声纹适配预留</span></div>}
-          <div className="aside-card quiet"><Target size={18} /><p>不确定时可以明确假设，再沿着假设推理。面试官也在观察你的思考过程。</p></div>
+          <Suspense fallback={<div className="avatar-stage"><div className="avatar-loading">正在唤醒面试官</div></div>}><AvatarStage mode={avatarMode} name={session.interviewerName} /></Suspense>
+          {session.videoEnabled && <div className="video-card">{cameraStream ? <video ref={videoRef} autoPlay muted playsInline /> : <div><VideoOff size={21} /><p>{cameraError || '正在请求摄像头权限…'}</p></div>}<span>{session.speechLanguage === 'en-US' ? 'English interview' : '中文面试'} · 火山实时语音识别</span></div>}
         </aside>
       </div>
       {session.currentQuestion && (
-        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${speechMode !== 'idle' ? 'active' : ''}`} onClick={toggleSpeech} type="button" disabled={speechMode === 'transcribing'}><Mic size={16} />{speechButtonText(speechMode)}</button><button onClick={submit} disabled={!answer.trim() || submitting}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
+        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${speechMode !== 'idle' ? 'active' : ''}`} onClick={toggleSpeech} type="button" disabled={submitting || speechMode === 'connecting' || speechMode === 'finalizing'}><Mic size={16} />{speechButtonText(speechMode)}</button><button onClick={submit} disabled={!answer.trim() || submitting || speechMode !== 'idle'}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
       )}
     </div>
   )
@@ -575,34 +639,41 @@ function resourceKindLabel(kind: string) { return ({ all: '全部类型', articl
 function resourceKindIcon(kind: string) { if (kind === 'video') return <PlayCircle size={13} />; if (kind === 'article') return <Newspaper size={13} />; return <BookOpen size={13} /> }
 function resourceDate(resource: LearningResource) { const date = resource.publishedAt ? new Date(resource.publishedAt) : undefined; return date && date.getFullYear() > 1900 ? date.toLocaleDateString('zh-CN') : resource.source }
 function intentLabel(intent: string) { return ({ hint: '提示', clarify: '换个说法', repeat: '重复题目', skip: '跳过', off_topic: '拉回题目', smalltalk: '闲聊回应', message: '继续对话' } as Record<string, string>)[intent] ?? '继续对话' }
-function speechButtonText(mode: SpeechMode) { return ({ idle: '语音', recognizing: '聆听中', recording: '停止录音', transcribing: '转写中' } as Record<SpeechMode, string>)[mode] }
+function speechButtonText(mode: SpeechMode) { return ({ idle: '语音', connecting: '连接中', recording: '停止录音', finalizing: '整理文字' } as Record<SpeechMode, string>)[mode] }
 function mergeSpeechText(base: string, transcript: string) { return [base.trimEnd(), transcript.trim()].filter(Boolean).join(base.trim() ? '\n' : '') }
 
 function SettingsDrawer({ open, value, onClose, onSaved, notify }: { open: boolean; value: ModelConfig; onClose: () => void; onSaved: (value: ModelConfig) => void; notify: (value: Toast) => void }) {
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState(value.baseUrl)
   const [model, setModel] = useState(value.model)
-  const [speechModel, setSpeechModel] = useState(value.speechModel)
+  const [speechApiKey, setSpeechApiKey] = useState('')
+  const [speechAppId, setSpeechAppId] = useState(value.speechAppId)
+  const [speechResourceId, setSpeechResourceId] = useState(value.speechResourceId || 'volc.bigasr.sauc.duration')
+  const [ttsApiKey, setTtsApiKey] = useState('')
+  const [ttsAppId, setTtsAppId] = useState(value.ttsAppId)
+  const [ttsResourceId, setTtsResourceId] = useState(value.ttsResourceId || 'seed-tts-2.0')
+  const [ttsSpeaker, setTtsSpeaker] = useState(value.ttsSpeaker)
+  const [ttsEnabled, setTtsEnabled] = useState(value.ttsEnabled)
   const [enabled, setEnabled] = useState(value.enabled)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  useEffect(() => { if (open) { setApiKey(''); setBaseUrl(value.baseUrl); setModel(value.model); setSpeechModel(value.speechModel); setEnabled(value.enabled) } }, [open, value])
+  useEffect(() => { if (open) { setApiKey(''); setBaseUrl(value.baseUrl); setModel(value.model); setSpeechApiKey(''); setSpeechAppId(value.speechAppId); setSpeechResourceId(value.speechResourceId || 'volc.bigasr.sauc.duration'); setTtsApiKey(''); setTtsAppId(value.ttsAppId); setTtsResourceId(value.ttsResourceId || 'seed-tts-2.0'); setTtsSpeaker(value.ttsSpeaker); setTtsEnabled(value.ttsEnabled); setEnabled(value.enabled) } }, [open, value])
   if (!open) return null
   const save = async () => {
     setSaving(true)
-    try { const next = await api.saveModelConfig({ apiKey, baseUrl, model, speechModel, enabled }); onSaved(next); notify({ type: 'success', message: '模型配置已保存' }); onClose() }
+    try { const next = await api.saveModelConfig({ apiKey, baseUrl, model, enabled, speechApiKey, speechAppId, speechResourceId, ttsApiKey, ttsAppId, ttsResourceId, ttsSpeaker, ttsEnabled }); onSaved(next); notify({ type: 'success', message: '模型与双向语音配置已保存' }); onClose() }
     catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '保存失败' }) }
     finally { setSaving(false) }
   }
   const test = async () => {
     setTesting(true)
     try {
-      const next = await api.saveModelConfig({ apiKey, baseUrl, model, speechModel, enabled: true }); onSaved(next)
+      const next = await api.saveModelConfig({ apiKey, baseUrl, model, enabled: true, speechApiKey, speechAppId, speechResourceId, ttsApiKey, ttsAppId, ttsResourceId, ttsSpeaker, ttsEnabled }); onSaved(next)
       const result = await api.testModelConfig(); setEnabled(true); notify({ type: 'success', message: result.message })
     } catch (error) { notify({ type: 'error', message: error instanceof Error ? error.message : '连接失败' }) }
     finally { setTesting(false) }
   }
-  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="settings-drawer"><header><div><span className="heading-icon violet"><Settings2 size={19} /></span><section><h2>大模型设置</h2><p>通过 Eino 接入 OpenAI-compatible API</p></section></div><button className="icon-button" onClick={onClose}><X size={19} /></button></header><div className="drawer-content"><div className="settings-callout"><ShieldCheck size={19} /><p><strong>凭据保存在本机</strong><br />API Key 以 0600 权限写入应用数据目录，不会进入项目代码或日志。</p></div><label className="setting-field"><span>API Key {value.hasApiKey && <em>已保存</em>}</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={value.hasApiKey ? '留空以继续使用已保存的 Key' : 'sk-...'} /></label><label className="setting-field"><span>Base URL <small>可留空使用默认地址</small></span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></label><label className="setting-field"><span>Model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="对话 / 出题 / 点评模型 ID" /></label><label className="setting-field"><span>Speech Model <small>录音兜底</small></span><input value={speechModel} onChange={(event) => setSpeechModel(event.target.value)} placeholder="例如 whisper-1 或服务商转写模型" /></label><label className="toggle-row"><span><strong>启用 AI 深度点评</strong><small>不可用时会自动降级为本地评分</small></span><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><i /></label><div className="settings-note"><Bot size={16} /><p>Model 用于出题、意图理解和点评；Speech Model 仅用于浏览器语音识别不可用时的录音转写。</p></div></div><footer><button className="secondary-action" onClick={test} disabled={testing || (!apiKey && !value.hasApiKey) || !model}>{testing ? <LoaderCircle className="spin" size={16} /> : <Zap size={16} />}测试连接</button><button className="primary-action compact" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}保存设置</button></footer></aside></div>
+  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="settings-drawer"><header><div><span className="heading-icon violet"><Settings2 size={19} /></span><section><h2>模型与双向语音</h2><p>对话模型 + 豆包 ASR/TTS</p></section></div><button className="icon-button" onClick={onClose}><X size={19} /></button></header><div className="drawer-content"><div className="settings-callout"><ShieldCheck size={19} /><p><strong>凭据保存在本机</strong><br />所有 Key 均以 0600 权限写入应用数据目录，不会进入项目代码或日志。</p></div><label className="setting-field"><span>对话 API Key {value.hasApiKey && <em>已保存</em>}</span><input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={value.hasApiKey ? '留空以继续使用已保存的 Key' : 'sk-...'} /></label><label className="setting-field"><span>Base URL <small>可留空使用默认地址</small></span><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></label><label className="setting-field"><span>Model</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="对话 / 出题 / 点评模型 ID" /></label><div className="settings-note"><Mic size={16} /><p><strong>豆包实时语音识别（ASR）</strong><br />旧版控制台填写 App ID + Access Token；新版控制台只填写 API Key，App ID 留空。</p></div><label className="setting-field"><span>ASR Access Token / API Key {value.hasSpeechApiKey && <em>已保存</em>}</span><input type="password" autoComplete="off" value={speechApiKey} onChange={(event) => setSpeechApiKey(event.target.value)} placeholder={value.hasSpeechApiKey ? '留空以继续使用已保存的凭据' : '旧版 Access Token 或新版 API Key'} /></label><label className="setting-field"><span>ASR App ID <small>旧版控制台必填</small></span><input value={speechAppId} onChange={(event) => setSpeechAppId(event.target.value)} placeholder="旧版火山语音应用 App ID" /></label><label className="setting-field"><span>ASR Resource ID</span><input value={speechResourceId} onChange={(event) => setSpeechResourceId(event.target.value)} placeholder="volc.bigasr.sauc.duration" /></label><div className="settings-note"><Volume2 size={16} /><p><strong>豆包语音合成（TTS）</strong><br />TTS 需要独立开通资源并选择控制台音色，不能复用 ASR Resource ID。</p></div><label className="setting-field"><span>TTS Access Token / API Key {value.hasTtsApiKey && <em>已保存</em>}</span><input type="password" autoComplete="off" value={ttsApiKey} onChange={(event) => setTtsApiKey(event.target.value)} placeholder={value.hasTtsApiKey ? '留空以继续使用已保存的凭据' : 'TTS Access Token 或 API Key'} /></label><label className="setting-field"><span>TTS App ID <small>旧版控制台填写</small></span><input value={ttsAppId} onChange={(event) => setTtsAppId(event.target.value)} placeholder="旧版 TTS App ID" /></label><label className="setting-field"><span>TTS Resource ID</span><input value={ttsResourceId} onChange={(event) => setTtsResourceId(event.target.value)} placeholder="seed-tts-2.0" /></label><label className="setting-field"><span>音色 ID</span><input value={ttsSpeaker} onChange={(event) => setTtsSpeaker(event.target.value)} placeholder="从豆包语音控制台音色列表复制" /></label><label className="toggle-row"><span><strong>自动朗读面试官内容</strong><small>朗读开场、题目、追问和反馈</small></span><input type="checkbox" checked={ttsEnabled} onChange={(event) => setTtsEnabled(event.target.checked)} /><i /></label><label className="toggle-row"><span><strong>启用 AI 深度点评</strong><small>不可用时会自动降级为本地评分</small></span><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><i /></label></div><footer><button className="secondary-action" onClick={test} disabled={testing || (!apiKey && !value.hasApiKey) || !model}>{testing ? <LoaderCircle className="spin" size={16} /> : <Zap size={16} />}测试对话模型</button><button className="primary-action compact" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}保存设置</button></footer></aside></div>
 }
 
 function languageLabel(language: Language) { return languageOptions.find((option) => option.value === language)?.label ?? language }

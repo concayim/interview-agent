@@ -1,0 +1,254 @@
+{
+  "source": "https://www.runoob.com/",
+  "synced_at": "2026-07-27T11:38:32.320659+00:00",
+  "languages": [
+    {
+      "slug": "assembly",
+      "name": "Assembly",
+      "aliases": [
+        "asm",
+        "汇编"
+      ],
+      "tutorial_url": "https://www.runoob.com/assembly/assembly-tutorial.html",
+      "file": "assembly.md",
+      "chapters": 23,
+      "sha256": "0a472a85fe1614ea31ed1b81126b3503273a9d93ed43dc0b41a4fcf18b03d298"
+    },
+    {
+      "slug": "c",
+      "name": "C",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/c/c-tutorial.html",
+      "file": "c.md",
+      "chapters": 62,
+      "sha256": "6884b51ca1496b6b7aa3f270eea0542345c59cee4fb21a365643244713f7b7b6"
+    },
+    {
+      "slug": "cpp",
+      "name": "C++",
+      "aliases": [
+        "c++",
+        "cplusplus"
+      ],
+      "tutorial_url": "https://www.runoob.com/cplusplus/cpp-tutorial.html",
+      "file": "cpp.md",
+      "chapters": 99,
+      "sha256": "2a7556cd21ab6262333c36eff2d39ffde296b4346eaa5959e27733777b02f056"
+    },
+    {
+      "slug": "csharp",
+      "name": "C#",
+      "aliases": [
+        "c#",
+        "cs",
+        "dotnet"
+      ],
+      "tutorial_url": "https://www.runoob.com/csharp/csharp-tutorial.html",
+      "file": "csharp.md",
+      "chapters": 42,
+      "sha256": "c849dcb17ae75dd7922eb53060712b3b4bc70c2a6a907da2b358c68060e6e3ba"
+    },
+    {
+      "slug": "dart",
+      "name": "Dart",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/dart/dart-tutorial.html",
+      "file": "dart.md",
+      "chapters": 21,
+      "sha256": "25778449bd3d3edc38236228359de364dbb086e606acc5a5b1488a6881368ea7"
+    },
+    {
+      "slug": "go",
+      "name": "Go",
+      "aliases": [
+        "golang"
+      ],
+      "tutorial_url": "https://www.runoob.com/go/go-tutorial.html",
+      "file": "go.md",
+      "chapters": 33,
+      "sha256": "8f469549add29738814e38c0c5c6d25d67a34dff4727dd506a58046f77b33cff"
+    },
+    {
+      "slug": "java",
+      "name": "Java",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/java/java-tutorial.html",
+      "file": "java.md",
+      "chapters": 56,
+      "sha256": "b5b1c16089898112bcff5c41d61515cd88b0fedb41e6c8b84b3aa0048af9bd31"
+    },
+    {
+      "slug": "javascript",
+      "name": "JavaScript",
+      "aliases": [
+        "js"
+      ],
+      "tutorial_url": "https://www.runoob.com/js/js-tutorial.html",
+      "file": "javascript.md",
+      "chapters": 85,
+      "sha256": "a38593a9f5875a8d69f981576ce75d2f7d5b4b051f61a49f90adf9cadf2addb9"
+    },
+    {
+      "slug": "julia",
+      "name": "Julia",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/julia/julia-tutorial.html",
+      "file": "julia.md",
+      "chapters": 18,
+      "sha256": "85a8edcf9783e74b1b3fe194fd3ca960aa56742fc2037d9e0157fc58e7473fe7"
+    },
+    {
+      "slug": "kotlin",
+      "name": "Kotlin",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/kotlin/kotlin-tutorial.html",
+      "file": "kotlin.md",
+      "chapters": 18,
+      "sha256": "21c315e8e9606cb51accb9e3b9d916aa11377ebde4642619e8fc2d3c431eaad8"
+    },
+    {
+      "slug": "lua",
+      "name": "Lua",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/lua/lua-tutorial.html",
+      "file": "lua.md",
+      "chapters": 23,
+      "sha256": "179c5dd6213d4cfcde33c599d639068c77dc016b7149bf8f2cba9015db167045"
+    },
+    {
+      "slug": "perl",
+      "name": "Perl",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/perl/perl-tutorial.html",
+      "file": "perl.md",
+      "chapters": 29,
+      "sha256": "343ca0e46b9db1fb5c2c3480bfbf4ff4f2d1be9e4c42bbc49f058b2795227755"
+    },
+    {
+      "slug": "php",
+      "name": "PHP",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/php/php-tutorial.html",
+      "file": "php.md",
+      "chapters": 93,
+      "sha256": "99756db63c159ce898616ab1a346e057cf3d94f81eb6b2db462f0164ec1ab12a"
+    },
+    {
+      "slug": "powershell",
+      "name": "PowerShell",
+      "aliases": [
+        "pwsh"
+      ],
+      "tutorial_url": "https://www.runoob.com/powershell/powershell-tutorial.html",
+      "file": "powershell.md",
+      "chapters": 16,
+      "sha256": "0b19f396180777ca2d90a81f8de930ec7be80616f13e3a7663aa7d6071b598f2"
+    },
+    {
+      "slug": "python",
+      "name": "Python",
+      "aliases": [
+        "python3",
+        "py"
+      ],
+      "tutorial_url": "https://www.runoob.com/python3/python3-tutorial.html",
+      "file": "python.md",
+      "chapters": 83,
+      "sha256": "3eeb3e05fc18b93423ba58b4a783cbf7ed53757b263169f9be6f4ea2e93253d1"
+    },
+    {
+      "slug": "r",
+      "name": "R",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/r/r-tutorial.html",
+      "file": "r.md",
+      "chapters": 29,
+      "sha256": "431074475efda6007c4fde84fa2672320f0af2f10a7d75ae774121d5619be2c2"
+    },
+    {
+      "slug": "ruby",
+      "name": "Ruby",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/ruby/ruby-tutorial.html",
+      "file": "ruby.md",
+      "chapters": 45,
+      "sha256": "bd076476c49e5ce07bd05c40ff5046e9e8dde66caf2ea8e8967d289a7eedab78"
+    },
+    {
+      "slug": "rust",
+      "name": "Rust",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/rust/rust-tutorial.html",
+      "file": "rust.md",
+      "chapters": 29,
+      "sha256": "f6f2fdbe83c6bd064a79e960b07cce757f913f274b1317eba34359657a7ac2f0"
+    },
+    {
+      "slug": "scala",
+      "name": "Scala",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/scala/scala-tutorial.html",
+      "file": "scala.md",
+      "chapters": 25,
+      "sha256": "5f91d30f43330b2ffd1bd6f1f3d265a7fea1a754c2f11a5fbef57a4d5daafa55"
+    },
+    {
+      "slug": "sql",
+      "name": "SQL",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/sql/sql-tutorial.html",
+      "file": "sql.md",
+      "chapters": 67,
+      "sha256": "41ba9b533f7876df5fba2a21d5ca2c57c7b05ce09384b94aa1b3d49dda724a87"
+    },
+    {
+      "slug": "swift",
+      "name": "Swift",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/swift/swift-tutorial.html",
+      "file": "swift.md",
+      "chapters": 33,
+      "sha256": "69144c0ebcd87ed0eb75e0e82fb93fa7dd839a89d1c6672f9eeaf2d8b7691d49"
+    },
+    {
+      "slug": "typescript",
+      "name": "TypeScript",
+      "aliases": [
+        "ts"
+      ],
+      "tutorial_url": "https://www.runoob.com/typescript/ts-tutorial.html",
+      "file": "typescript.md",
+      "chapters": 72,
+      "sha256": "47698f3979a300b95b7057456508a7103bf6e3129b500818453a733386bf1a3a"
+    },
+    {
+      "slug": "vbscript",
+      "name": "VBScript",
+      "aliases": [
+        "vbs"
+      ],
+      "tutorial_url": "https://www.runoob.com/vbscript/vbscript-tutorial.html",
+      "file": "vbscript.md",
+      "chapters": 10,
+      "sha256": "b9572e6af86b0b94ebf7224a14afebc59e2b51e3c6a69719090973c1505120d6"
+    },
+    {
+      "slug": "verilog",
+      "name": "Verilog",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/w3cnote/verilog-tutorial.html",
+      "file": "verilog.md",
+      "chapters": 1,
+      "sha256": "b205e30c48a22564a0ad77db5d5ab5a019233e5f13e06551fe65d03507eeb089"
+    },
+    {
+      "slug": "zig",
+      "name": "Zig",
+      "aliases": [],
+      "tutorial_url": "https://www.runoob.com/zig/zig-tutorial.html",
+      "file": "zig.md",
+      "chapters": 14,
+      "sha256": "256dd401c26ea75328cd9c0d5fc983572ea696b81b6c2af8859439bf4bd90671"
+    }
+  ]
+}

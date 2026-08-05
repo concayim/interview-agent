@@ -1,0 +1,19 @@
+{
+  "id": "computer-julia",
+  "kind": "domain",
+  "name": "Julia 工程师",
+  "shortLabel": "Juli",
+  "description": "覆盖 Julia 语言基础、核心机制与工程实践，参考菜鸟教程 18 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "data",
+  "language": "julia",
+  "accent": "#4f9cf9",
+  "knowledgeBaseId": "computer-julia",
+  "prompt": "围绕 Julia 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "Julia",
+    "多重派发",
+    "科学计算"
+  ]
+}

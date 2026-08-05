@@ -1,0 +1,9 @@
+Seed-san VRM model
+Copyright: VirtualCast, Inc.
+Source: https://github.com/vrm-c/vrm-specification/tree/master/samples/Seed-san
+License: VRM Public License 1.0
+License text: https://vrm.dev/licenses/1.0/
+
+The embedded VRM metadata permits use by everyone, corporate commercial use,
+redistribution, and redistribution of modifications. Credit notation is
+required. The model is bundled unchanged as the default interviewer avatar.

@@ -10,6 +10,7 @@ const DEFAULT_PORT = 46831
 const TOKEN = randomBytes(24).toString('hex')
 let port = DEFAULT_PORT
 let backend
+let shuttingDown = false
 let runtimeConfig = {
   apiBaseUrl: `http://127.0.0.1:${DEFAULT_PORT}/api/v1`,
   apiToken: TOKEN,
@@ -70,15 +71,25 @@ async function startBackend() {
       INTERVIEW_AGENT_DATA_DIR: path.join(app.getPath('userData'), 'data'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
+    detached: false,
   })
   backend.cleanup = target.cleanup
   backend.stdout.on('data', (chunk) => console.log(`[backend] ${chunk.toString().trimEnd()}`))
   backend.stderr.on('data', (chunk) => console.error(`[backend] ${chunk.toString().trimEnd()}`))
   backend.on('exit', (code) => {
     backend.cleanup?.()
-    if (code && !app.isQuitting) console.error(`Backend exited with code ${code}`)
+    backend = undefined
+    if (!shuttingDown) {
+      console.error(`Backend exited unexpectedly with code ${code ?? 'unknown'}`)
+      app.quit()
+    }
   })
+}
+
+function stopBackend() {
+  if (shuttingDown) return
+  shuttingDown = true
+  if (backend && !backend.killed) backend.kill('SIGTERM')
 }
 
 async function waitForBackend() {
@@ -141,11 +152,10 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
-  app.isQuitting = true
-  if (backend && !backend.killed) {
-    if (process.platform !== 'win32') process.kill(-backend.pid, 'SIGTERM')
-    else backend.kill('SIGTERM')
-  }
+  stopBackend()
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+
+process.once('SIGINT', () => { stopBackend(); app.quit() })
+process.once('SIGTERM', () => { stopBackend(); app.quit() })

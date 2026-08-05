@@ -1,0 +1,19 @@
+{
+  "id": "computer-powershell",
+  "kind": "domain",
+  "name": "PowerShell 工程师",
+  "shortLabel": "PS",
+  "description": "覆盖 PowerShell 语言基础、核心机制与工程实践，参考菜鸟教程 16 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "language",
+  "language": "powershell",
+  "accent": "#168aad",
+  "knowledgeBaseId": "computer-powershell",
+  "prompt": "围绕 PowerShell 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "PowerShell",
+    "管道",
+    "自动化"
+  ]
+}

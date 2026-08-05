@@ -1,0 +1,19 @@
+{
+  "id": "computer-dart",
+  "kind": "domain",
+  "name": "Dart 工程师",
+  "shortLabel": "Dart",
+  "description": "覆盖 Dart 语言基础、核心机制与工程实践，参考菜鸟教程 21 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "mobile",
+  "language": "dart",
+  "accent": "#7768d8",
+  "knowledgeBaseId": "computer-dart",
+  "prompt": "围绕 Dart 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "Dart",
+    "异步编程",
+    "Flutter"
+  ]
+}

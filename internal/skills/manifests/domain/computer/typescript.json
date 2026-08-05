@@ -1,0 +1,19 @@
+{
+  "id": "computer-typescript",
+  "kind": "domain",
+  "name": "TypeScript 工程师",
+  "shortLabel": "TS",
+  "description": "覆盖 TypeScript 语言基础、核心机制与工程实践，参考菜鸟教程 72 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "frontend",
+  "language": "typescript",
+  "accent": "#168aad",
+  "knowledgeBaseId": "computer-typescript",
+  "prompt": "围绕 TypeScript 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "TypeScript",
+    "类型系统",
+    "泛型"
+  ]
+}

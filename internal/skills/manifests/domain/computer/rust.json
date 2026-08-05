@@ -1,0 +1,19 @@
+{
+  "id": "computer-rust",
+  "kind": "domain",
+  "name": "Rust 工程师",
+  "shortLabel": "Rust",
+  "description": "覆盖 Rust 语言基础、核心机制与工程实践，参考菜鸟教程 29 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "systems",
+  "language": "rust",
+  "accent": "#20b486",
+  "knowledgeBaseId": "computer-rust",
+  "prompt": "围绕 Rust 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "所有权",
+    "生命周期",
+    "并发安全"
+  ]
+}

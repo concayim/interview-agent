@@ -1,0 +1,19 @@
+{
+  "id": "computer-php",
+  "kind": "domain",
+  "name": "PHP 工程师",
+  "shortLabel": "PHP",
+  "description": "覆盖 PHP 语言基础、核心机制与工程实践，参考菜鸟教程 93 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "backend",
+  "language": "php",
+  "accent": "#7768d8",
+  "knowledgeBaseId": "computer-php",
+  "prompt": "围绕 PHP 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "PHP",
+    "Web 开发",
+    "类型系统"
+  ]
+}

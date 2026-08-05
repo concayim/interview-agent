@@ -1,0 +1,19 @@
+{
+  "id": "computer-verilog",
+  "kind": "domain",
+  "name": "Verilog 工程师",
+  "shortLabel": "Veri",
+  "description": "覆盖 Verilog 语言基础、核心机制与工程实践，参考菜鸟教程 1 个章节。",
+  "industry": "computer",
+  "industryName": "计算机",
+  "domain": "systems",
+  "language": "verilog",
+  "accent": "#5f8d4e",
+  "knowledgeBaseId": "computer-verilog",
+  "prompt": "围绕 Verilog 的语言机制、常见陷阱和工程实践出题；可参考已同步的菜鸟教程内容，重点考查理解而非语法背诵。",
+  "topics": [
+    "RTL",
+    "时序逻辑",
+    "仿真"
+  ]
+}

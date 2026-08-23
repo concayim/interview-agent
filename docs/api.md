@@ -117,11 +117,11 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 - `interviewerSkillId`: `echo-coach | atlas-architect | vera-challenger | socrates-guide`
 - `includeFoundation`: 是否混入计算机基础公共库
 - `videoEnabled`: 是否开启视频面试
-- `speechLanguage`: 语音输入语言，支持 `zh-CN | en-US`
+- `speechLanguage`: 面试输出与语音语言，支持 `zh-CN | en-US`；`en-US` 会让题目、追问、评价、本地兜底、ASR 和 TTS 全部使用英语
 - `difficulty`: `easy | medium | hard | mixed`
 - `questionCount`: `1..10`，若超过当前筛选结果则返回实际可用数量
 
-已配置模型时，服务端会优先按领域 Skill、难度、简历关键词和基础库偏好动态生成本场题目；生成失败时回退内置题库。
+服务端优先从领域 Skill 绑定的知识库 QA 中选择出题次数较少、与难度和简历关键词相关的题目；知识库无可用 QA 时回退模型生成题或内置题库。
 
 响应 `201`：
 
@@ -140,7 +140,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
   "includeFoundation": true,
   "videoEnabled": true,
   "speechLanguage": "zh-CN",
-  "questionSource": "model",
+  "questionSource": "knowledge",
   "status": "active",
   "current": 0,
   "total": 5,
@@ -156,7 +156,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 ```
 
 注意：进行中的面试不会返回 `standardAnswer` 与 `keyPoints`。
-`questionSource` 为 `model` 或 `built-in`，用于标识本场题目来源。
+`questionSource` 为 `knowledge`、`model` 或 `built-in`，用于标识本场题目来源。
 
 ### `GET /interviews/{id}`
 
@@ -187,13 +187,43 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
     "source": "llm"
   },
   "completed": false,
+  "requiresFollowUp": false,
   "nextQuestion": { "id": "go-02", "language": "golang", "difficulty": "easy", "prompt": "…", "tags": ["Go"] },
   "current": 1,
   "total": 5
 }
 ```
 
-`accepted=true` 表示本次输入已被当作正式回答或跳过请求并推进题目。`intent` 可能为 `answer` 或 `skip`；跳过时会生成 `0` 分本地评价并进入下一题。
+`accepted=true` 表示本次输入已被当作正式回答或跳过请求。`intent` 可能为 `answer` 或 `skip`；跳过时会生成 `0` 分本地评价并进入下一题。
+正式回答按知识库标准答案对累计回答做 0–100 语义相似度评分。分数低于 75 时不会推进，响应示例：
+
+```json
+{
+  "accepted": true,
+  "intent": "answer",
+  "evaluation": {
+    "score": 68,
+    "summary": "已经说明轻量调度，但线程映射和调度实体仍不完整。",
+    "strengths": ["说明了 goroutine 由运行时管理"],
+    "improvements": ["补充 G、M、P 的职责和映射关系"],
+    "followUpQuestion": "目前还不够具体。G、M、P 分别承担什么职责，它们如何协作？",
+    "source": "llm"
+  },
+  "completed": false,
+  "requiresFollowUp": true,
+  "nextQuestion": {
+    "id": "go-01-followup-1",
+    "language": "golang",
+    "difficulty": "easy",
+    "prompt": "目前还不够具体。G、M、P 分别承担什么职责，它们如何协作？",
+    "tags": ["Go", "高并发", "调度器"]
+  },
+  "current": 0,
+  "total": 5
+}
+```
+
+后续回答会携带此前尝试作为模型上下文；达到 75 分时 `requiresFollowUp=false` 并进入下一题。最终复盘会合并保留同一题的多次正式回答。
 回答链路服务端超时为 20 秒；模型意图识别、模型评价或本地评分会在该窗口内完成，模型不可用时自动降级。
 
 如果用户是在求提示、要求解释或重复题目，响应不会推进当前题：
@@ -213,7 +243,7 @@ X-Interview-Agent-Token: <本次启动生成的随机令牌>
 
 ### `GET /speech/realtime`
 
-WebSocket 实时语音接口。查询参数 `language` 支持 `zh-CN` 和 `en-US`；由于浏览器 WebSocket 不能设置自定义 Header，本地访问令牌通过 `token` 查询参数发送。服务端不会把火山凭据返回给前端。
+WebSocket 实时语音接口。查询参数 `language` 支持 `zh-CN` 和 `en-US`，英语面试会发送 `en-US`；由于浏览器 WebSocket 不能设置自定义 Header，本地访问令牌通过 `token` 查询参数发送。服务端不会把火山凭据返回给前端。
 
 连接成功后服务端先发送：
 
@@ -346,6 +376,8 @@ API Key 永远不会返回。
 
 ## 知识库
 
+知识库以 MySQL 作为权威数据源，以 Milvus 保存 QA 向量。非空查询会并行执行 MySQL 关键词召回和 Milvus 向量召回，再通过 Reciprocal Rank Fusion 合并排序；最终响应始终回表读取 MySQL 中的完整 QA。`query` 为空时不访问 Milvus。
+
 ### `GET /knowledge/bases`
 
 返回公共库与各语言库，以及 QA 数和累计出题次数。
@@ -367,7 +399,7 @@ API Key 永远不会返回。
 
 ### `GET /knowledge/bases/{id}/qa?query=TCP&limit=30`
 
-按问题、答案和标签检索指定知识库。`query` 为空时按出题次数与更新时间返回。
+按问题、答案、关键点和标签进行关键词与语义混合检索。`query` 为空时按出题次数与更新时间返回。
 
 ```json
 {

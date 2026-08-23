@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"interview-agent/internal/agent"
 	"interview-agent/internal/domain"
@@ -64,15 +65,16 @@ type SessionView struct {
 }
 
 type AnswerResult struct {
-	Evaluation     *domain.Evaluation     `json:"evaluation,omitempty"`
-	Completed      bool                   `json:"completed"`
-	NextQuestion   *domain.PublicQuestion `json:"nextQuestion,omitempty"`
-	Current        int                    `json:"current"`
-	Total          int                    `json:"total"`
-	Report         *domain.Report         `json:"report,omitempty"`
-	Accepted       bool                   `json:"accepted"`
-	Intent         string                 `json:"intent"`
-	AssistantReply string                 `json:"assistantReply,omitempty"`
+	Evaluation       *domain.Evaluation     `json:"evaluation,omitempty"`
+	Completed        bool                   `json:"completed"`
+	RequiresFollowUp bool                   `json:"requiresFollowUp"`
+	NextQuestion     *domain.PublicQuestion `json:"nextQuestion,omitempty"`
+	Current          int                    `json:"current"`
+	Total            int                    `json:"total"`
+	Report           *domain.Report         `json:"report,omitempty"`
+	Accepted         bool                   `json:"accepted"`
+	Intent           string                 `json:"intent"`
+	AssistantReply   string                 `json:"assistantReply,omitempty"`
 }
 
 type Service struct {
@@ -120,6 +122,9 @@ func (s *Service) Start(input StartInput) (SessionView, error) {
 	input.SpeechLanguage = normalizeSpeechLanguage(input.SpeechLanguage)
 	if input.CandidateName == "" {
 		input.CandidateName = "候选人"
+		if input.SpeechLanguage == "en-US" {
+			input.CandidateName = "Candidate"
+		}
 	}
 	if input.Difficulty == "" {
 		input.Difficulty = "mixed"
@@ -209,6 +214,12 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 		return AnswerResult{}, ErrCompleted
 	}
 	question := session.Questions[session.Current]
+	evaluationQuestion := question
+	if session.FollowUpPrompt != "" {
+		evaluationQuestion.Prompt = session.FollowUpPrompt
+	}
+	previousAnswers := append([]string(nil), session.PreviousAnswers...)
+	attemptCount := len(previousAnswers)
 	current := session.Current
 	total := len(session.Questions)
 	interviewerName := session.InterviewerName
@@ -216,20 +227,31 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 	evaluationFocus := append([]string(nil), session.EvaluationFocus...)
 	feedbackTone := session.FeedbackTone
 	interviewerSkillID := session.InterviewerSkillID
+	outputLanguage := session.SpeechLanguage
 	s.mu.RUnlock()
 
-	intentResult := s.resolveCandidateIntent(ctx, agent.IntentInput{Question: question, CandidateMessage: input.Answer, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, FeedbackTone: feedbackTone})
+	intentResult := s.resolveCandidateIntent(ctx, agent.IntentInput{Question: evaluationQuestion, CandidateMessage: input.Answer, OutputLanguage: outputLanguage, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, FeedbackTone: feedbackTone})
 	if !intentResult.Accepted {
 		return AnswerResult{Accepted: false, Intent: intentResult.Intent, AssistantReply: intentResult.AssistantReply, Current: current, Total: total}, nil
 	}
 	var evaluation domain.Evaluation
 	if intentResult.Intent == "skip" {
-		evaluation = skippedEvaluation()
+		evaluation = skippedEvaluation(outputLanguage)
 	} else {
 		var err error
-		evaluation, err = s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: question, CandidateAnswer: input.Answer, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, EvaluationFocus: evaluationFocus, FeedbackTone: feedbackTone})
+		evaluation, err = s.evaluator.Evaluate(ctx, agent.EvaluationInput{Question: evaluationQuestion, CandidateAnswer: input.Answer, PreviousAnswers: previousAnswers, OutputLanguage: outputLanguage, InterviewerName: interviewerName, InterviewerPrompt: interviewerPrompt, EvaluationFocus: evaluationFocus, FeedbackTone: feedbackTone})
 		if err != nil {
-			evaluation = localEvaluate(question, input.Answer, err, interviewerSkillID)
+			cumulativeAnswer := strings.Join(append(previousAnswers, input.Answer), "\n")
+			evaluation = localEvaluate(question, cumulativeAnswer, err, interviewerSkillID, outputLanguage)
+		}
+		if evaluation.Score < 75 && strings.TrimSpace(evaluation.FollowUpQuestion) == "" {
+			evaluation.FollowUpQuestion = buildFollowUpQuestion(question, interviewerSkillID, outputLanguage)
+		}
+		if evaluation.Score < 75 {
+			if followUpLeaksAnswer(evaluation.FollowUpQuestion, question) {
+				evaluation.FollowUpQuestion = buildFollowUpQuestion(question, interviewerSkillID, outputLanguage)
+			}
+			evaluation = inProgressEvaluation(evaluation, interviewerSkillID, outputLanguage)
 		}
 	}
 
@@ -246,7 +268,24 @@ func (s *Service) Answer(ctx context.Context, id string, input AnswerInput) (Ans
 	if session.Questions[session.Current].ID != question.ID {
 		return AnswerResult{}, fmt.Errorf("该题已经提交，请继续下一题")
 	}
-	session.Answers = append(session.Answers, domain.AnswerRecord{Question: question, Answer: input.Answer, ElapsedSeconds: input.ElapsedSeconds, Evaluation: evaluation})
+	if len(session.PreviousAnswers) != attemptCount {
+		return AnswerResult{}, fmt.Errorf("该轮回答已经提交，请基于最新追问继续作答")
+	}
+	if intentResult.Intent != "skip" && evaluation.Score < 75 {
+		session.PreviousAnswers = append(session.PreviousAnswers, input.Answer)
+		session.PendingElapsed += input.ElapsedSeconds
+		session.FollowUpPrompt = evaluation.FollowUpQuestion
+		followUp := question.Public()
+		followUp.ID = fmt.Sprintf("%s-followup-%d", question.ID, len(session.PreviousAnswers))
+		followUp.Prompt = evaluation.FollowUpQuestion
+		return AnswerResult{Evaluation: &evaluation, RequiresFollowUp: true, NextQuestion: &followUp, Accepted: true, Intent: intentResult.Intent, Current: session.Current, Total: len(session.Questions)}, nil
+	}
+	allAnswers := append(append([]string(nil), session.PreviousAnswers...), input.Answer)
+	elapsedSeconds := session.PendingElapsed + input.ElapsedSeconds
+	session.PreviousAnswers = nil
+	session.PendingElapsed = 0
+	session.FollowUpPrompt = ""
+	session.Answers = append(session.Answers, domain.AnswerRecord{Question: question, Answer: strings.Join(allAnswers, "\n\n"), ElapsedSeconds: elapsedSeconds, Evaluation: evaluation})
 	session.Current++
 	result := AnswerResult{Evaluation: &evaluation, Accepted: true, Intent: intentResult.Intent, Current: session.Current, Total: len(session.Questions)}
 	if session.Current >= len(session.Questions) {
@@ -277,11 +316,15 @@ func (s *Service) Report(id string) (domain.Report, error) {
 }
 
 func (s *Service) selectQuestions(input StartInput, domainSkill skills.Skill, keywords []string) ([]domain.Question, string, error) {
+	if selected := s.selectKnowledgeQuestions(input, domainSkill, keywords); len(selected) > 0 && (input.SpeechLanguage != "en-US" || englishQuestionsOnly(selected)) {
+		return selected, "knowledge", nil
+	}
 	if generator, ok := s.evaluator.(agent.QuestionGenerator); ok {
 		ctx, cancel := context.WithTimeout(context.Background(), 16*time.Second)
 		defer cancel()
 		generated, err := generator.GenerateQuestions(ctx, agent.QuestionGenerationInput{
 			Language:          input.Language,
+			OutputLanguage:    input.SpeechLanguage,
 			Difficulty:        input.Difficulty,
 			QuestionCount:     input.QuestionCount,
 			CandidateKeywords: keywords,
@@ -290,8 +333,14 @@ func (s *Service) selectQuestions(input StartInput, domainSkill skills.Skill, ke
 			Topics:            domainSkill.Topics,
 			IncludeFoundation: input.IncludeFoundation,
 		})
-		if err == nil && len(generated) > 0 {
+		if err == nil && len(generated) > 0 && (input.SpeechLanguage != "en-US" || englishQuestionsOnly(generated)) {
 			return generated, "model", nil
+		}
+	}
+	if input.SpeechLanguage == "en-US" {
+		selected := questions.English(input.Language, domainSkill.Name, domainSkill.Topics, input.Difficulty, input.QuestionCount, input.IncludeFoundation)
+		if len(selected) > 0 {
+			return selected, "built-in", nil
 		}
 	}
 	selected, err := questions.SelectWithFoundation(input.Language, input.Difficulty, input.QuestionCount, keywords, input.IncludeFoundation)
@@ -302,6 +351,92 @@ func (s *Service) selectQuestions(input StartInput, domainSkill skills.Skill, ke
 		}
 	}
 	return selected, "built-in", err
+}
+
+func (s *Service) selectKnowledgeQuestions(input StartInput, domainSkill skills.Skill, keywords []string) []domain.Question {
+	if s.knowledge == nil || domainSkill.KnowledgeBaseID == "" {
+		return nil
+	}
+	count := input.QuestionCount
+	if count < 1 {
+		count = 5
+	}
+	if count > 10 {
+		count = 10
+	}
+	foundationCount := 0
+	if input.IncludeFoundation && count > 1 {
+		foundationCount = 1
+	}
+	query := strings.Join(append(append([]string(nil), keywords...), domainSkill.Topics...), " ")
+	items, err := s.knowledge.Search(domainSkill.KnowledgeBaseID, query, 100)
+	if err != nil || len(items) == 0 {
+		items, err = s.knowledge.Search(domainSkill.KnowledgeBaseID, "", 100)
+	}
+	if err != nil {
+		return nil
+	}
+	selected := knowledgeItemsToQuestions(items, input.Difficulty, count-foundationCount)
+	if foundationCount == 1 {
+		foundationItems, foundationErr := s.knowledge.Search("computer-foundation", "", 100)
+		if foundationErr == nil {
+			selected = append(selected, knowledgeItemsToQuestions(foundationItems, input.Difficulty, 1)...)
+		}
+	}
+	if len(selected) > count {
+		selected = selected[:count]
+	}
+	return selected
+}
+
+func knowledgeItemsToQuestions(items []knowledge.QAItem, difficulty string, limit int) []domain.Question {
+	if limit < 1 {
+		return nil
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].IssuedCount != items[j].IssuedCount {
+			return items[i].IssuedCount < items[j].IssuedCount
+		}
+		return items[i].UpdatedAt.Before(items[j].UpdatedAt)
+	})
+	result := make([]domain.Question, 0, limit)
+	appendMatching := func(requireDifficulty bool) {
+		for _, item := range items {
+			if len(result) >= limit {
+				return
+			}
+			if requireDifficulty && difficulty != "" && difficulty != "mixed" && item.Difficulty != difficulty {
+				continue
+			}
+			alreadySelected := false
+			for _, question := range result {
+				if question.ID == strings.TrimPrefix(item.ID, "qa-") {
+					alreadySelected = true
+					break
+				}
+			}
+			if alreadySelected || strings.TrimSpace(item.Question) == "" || strings.TrimSpace(item.Answer) == "" {
+				continue
+			}
+			result = append(result, domain.Question{ID: strings.TrimPrefix(item.ID, "qa-"), Language: item.Language, Difficulty: item.Difficulty, Prompt: item.Question, StandardAnswer: item.Answer, KeyPoints: append([]string(nil), item.KeyPoints...), Tags: append([]string(nil), item.Tags...)})
+		}
+	}
+	appendMatching(true)
+	appendMatching(false)
+	return result
+}
+
+func englishQuestionsOnly(items []domain.Question) bool {
+	for _, question := range items {
+		values := append([]string{question.Prompt, question.StandardAnswer}, question.KeyPoints...)
+		values = append(values, question.Tags...)
+		for _, value := range values {
+			if strings.IndexFunc(value, func(r rune) bool { return unicode.Is(unicode.Han, r) }) >= 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func normalizeSpeechLanguage(value string) string {
@@ -320,24 +455,28 @@ func view(session *domain.Session) SessionView {
 	result := SessionView{ID: session.ID, CandidateName: session.CandidateName, Language: session.Language, Difficulty: session.Difficulty, Industry: session.Industry, DomainSkillID: session.DomainSkillID, DomainSkillName: session.DomainSkillName, InterviewerSkillID: session.InterviewerSkillID, InterviewerName: session.InterviewerName, InterviewerOpening: session.InterviewerOpening, IncludeFoundation: session.IncludeFoundation, VideoEnabled: session.VideoEnabled, SpeechLanguage: session.SpeechLanguage, QuestionSource: session.QuestionSource, Status: session.Status, Current: session.Current, Total: len(session.Questions), StartedAt: session.StartedAt}
 	if session.Status == "active" && session.Current < len(session.Questions) {
 		q := session.Questions[session.Current].Public()
+		if session.FollowUpPrompt != "" {
+			q.ID = fmt.Sprintf("%s-followup-%d", q.ID, len(session.PreviousAnswers))
+			q.Prompt = session.FollowUpPrompt
+		}
 		result.CurrentQuestion = &q
 	}
 	return result
 }
 
 func (s *Service) resolveCandidateIntent(ctx context.Context, input agent.IntentInput) agent.IntentResult {
-	if result, handled := detectLocalCandidateIntent(input.CandidateMessage, input.Question); handled {
+	if result, handled := detectLocalCandidateIntent(input.CandidateMessage, input.Question, input.OutputLanguage); handled {
 		return result
 	}
 	if resolver, ok := s.evaluator.(agent.IntentResolver); ok {
 		if result, err := resolver.ResolveIntent(ctx, input); err == nil {
-			return normalizeIntentResult(result)
+			return normalizeIntentResult(result, input.OutputLanguage)
 		}
 	}
 	return agent.IntentResult{Intent: "answer", Accepted: true}
 }
 
-func normalizeIntentResult(result agent.IntentResult) agent.IntentResult {
+func normalizeIntentResult(result agent.IntentResult, outputLanguage string) agent.IntentResult {
 	result.Intent = strings.TrimSpace(strings.ToLower(result.Intent))
 	switch result.Intent {
 	case "answer", "skip":
@@ -351,12 +490,16 @@ func normalizeIntentResult(result agent.IntentResult) agent.IntentResult {
 		result.AssistantReply = ""
 	}
 	if !result.Accepted && strings.TrimSpace(result.AssistantReply) == "" {
-		result.AssistantReply = "我理解你的意思。我们先回到当前题，你可以从一句结论开始，后面再补充原因和边界。"
+		if isEnglishInterview(outputLanguage) {
+			result.AssistantReply = "I understand. Let's return to the current question: start with a short conclusion, then explain the reasoning and boundaries."
+		} else {
+			result.AssistantReply = "我理解你的意思。我们先回到当前题，你可以从一句结论开始，后面再补充原因和边界。"
+		}
 	}
 	return result
 }
 
-func detectLocalCandidateIntent(answer string, question domain.Question) (agent.IntentResult, bool) {
+func detectLocalCandidateIntent(answer string, question domain.Question, outputLanguage string) (agent.IntentResult, bool) {
 	compact := strings.ToLower(strings.TrimSpace(answer))
 	if compact == "" {
 		return agent.IntentResult{}, false
@@ -367,14 +510,18 @@ func detectLocalCandidateIntent(answer string, question domain.Question) (agent.
 	if len([]rune(compact)) > 80 {
 		return agent.IntentResult{}, false
 	}
-	if containsAny(compact, "重复", "再说一遍", "再发", "重新发", "上一题", "题目是什么") {
-		return agent.IntentResult{Intent: "repeat", Accepted: false, AssistantReply: fmt.Sprintf("当然。当前题目是：%s", question.Prompt)}, true
+	if containsAny(compact, "重复", "再说一遍", "再发", "重新发", "上一题", "题目是什么", "repeat", "say that again", "what was the question") {
+		reply := fmt.Sprintf("当然。当前题目是：%s", question.Prompt)
+		if isEnglishInterview(outputLanguage) {
+			reply = fmt.Sprintf("Of course. The current question is: %s", question.Prompt)
+		}
+		return agent.IntentResult{Intent: "repeat", Accepted: false, AssistantReply: reply}, true
 	}
-	if containsAny(compact, "什么意思", "没懂", "看不懂", "解释一下", "换个说法", "换种说法", "展开一下", "题目意思") {
-		return agent.IntentResult{Intent: "clarify", Accepted: false, AssistantReply: clarifyQuestionReply(question)}, true
+	if containsAny(compact, "什么意思", "没懂", "看不懂", "解释一下", "换个说法", "换种说法", "展开一下", "题目意思", "what do you mean", "could you explain", "rephrase", "clarify") {
+		return agent.IntentResult{Intent: "clarify", Accepted: false, AssistantReply: clarifyQuestionReply(question, outputLanguage)}, true
 	}
-	if containsAny(compact, "提示", "hint", "怎么答", "思路", "不会", "不知道", "没思路", "帮我") {
-		return agent.IntentResult{Intent: "hint", Accepted: false, AssistantReply: hintQuestionReply(question)}, true
+	if containsAny(compact, "提示", "hint", "怎么答", "思路", "不会", "不知道", "没思路", "帮我", "help me", "where should i start", "any clue") {
+		return agent.IntentResult{Intent: "hint", Accepted: false, AssistantReply: hintQuestionReply(question, outputLanguage)}, true
 	}
 	return agent.IntentResult{}, false
 }
@@ -388,7 +535,14 @@ func containsAny(value string, needles ...string) bool {
 	return false
 }
 
-func clarifyQuestionReply(question domain.Question) string {
+func clarifyQuestionReply(question domain.Question, outputLanguage string) string {
+	if isEnglishInterview(outputLanguage) {
+		topic := strings.Join(question.Tags, ", ")
+		if topic == "" {
+			topic = "the core concept in this question"
+		}
+		return fmt.Sprintf("Let me rephrase it: explain the concept, mechanism, and boundaries around %s. Start with a one-sentence conclusion, explain why, and finish with a use case or common pitfall.", topic)
+	}
 	topic := strings.Join(question.Tags, "、")
 	if topic == "" {
 		topic = "这道题"
@@ -396,7 +550,14 @@ func clarifyQuestionReply(question domain.Question) string {
 	return fmt.Sprintf("我换个说法：这题想看你能不能围绕「%s」讲清概念、机制和边界。你可以先用一句话给结论，再解释为什么，最后补一个适用场景或容易踩的坑。", topic)
 }
 
-func hintQuestionReply(question domain.Question) string {
+func hintQuestionReply(question domain.Question, outputLanguage string) string {
+	if isEnglishInterview(outputLanguage) {
+		topic := strings.Join(question.Tags, ", ")
+		if topic == "" {
+			topic = "the core concept"
+		}
+		return fmt.Sprintf("Try this structure: define %s, explain the problem it solves, and then add a limitation, counterexample, or project experience. A rough first answer is fine.", topic)
+	}
 	topic := strings.Join(question.Tags, "、")
 	if topic == "" {
 		topic = "题目里的核心概念"
@@ -404,7 +565,10 @@ func hintQuestionReply(question domain.Question) string {
 	return fmt.Sprintf("可以按这个顺序组织：先定义「%s」，再说它解决了什么问题，然后补充限制、反例或项目里的使用经验。先答一个粗版本也可以，我会根据你的回答继续点评。", topic)
 }
 
-func skippedEvaluation() domain.Evaluation {
+func skippedEvaluation(outputLanguage string) domain.Evaluation {
+	if isEnglishInterview(outputLanguage) {
+		return domain.Evaluation{Score: 0, Summary: "This question was skipped as requested.", Strengths: []string{"You recognized the current blocker and made a clear decision."}, Improvements: []string{"Review the standard answer, identify the core concept, and restate it in one sentence."}, Source: "local"}
+	}
 	return domain.Evaluation{
 		Score:        0,
 		Summary:      "本题已按你的要求跳过。",
@@ -414,7 +578,7 @@ func skippedEvaluation() domain.Evaluation {
 	}
 }
 
-func localEvaluate(question domain.Question, answer string, modelErr error, interviewerSkillID string) domain.Evaluation {
+func localEvaluate(question domain.Question, answer string, modelErr error, interviewerSkillID, outputLanguage string) domain.Evaluation {
 	lower := strings.ToLower(answer)
 	hits := 0
 	matched := make([]string, 0)
@@ -443,12 +607,38 @@ func localEvaluate(question domain.Question, answer string, modelErr error, inte
 	score := 20
 	if len(question.KeyPoints) > 0 {
 		score += hits * 80 / len(question.KeyPoints)
+	} else {
+		score = standardAnswerCoverageScore(answer, question.StandardAnswer)
 	}
-	if len([]rune(answer)) < 20 {
+	if len([]rune(answer)) < 20 && !(len(question.KeyPoints) == 0 && score >= 75) {
 		score = min(score, 25)
 	}
 	if score > 100 {
 		score = 100
+	}
+	if isEnglishInterview(outputLanguage) {
+		strengths := []string{"The answer covers part of the expected technical substance."}
+		if len(matched) > 0 {
+			strengths = []string{"Covered key points: " + strings.Join(matched, ", ")}
+		}
+		improvements := []string{"Use the standard answer to fill in missing technical details and add an engineering example."}
+		if len(missing) > 0 {
+			prefix := "Consider adding: "
+			switch interviewerSkillID {
+			case "vera-challenger":
+				prefix = "Critical gaps to address: "
+			case "atlas-architect":
+				prefix = "Add constraints and boundaries for: "
+			case "socrates-guide":
+				prefix = "Ask how these concepts connect: "
+			}
+			improvements = []string{prefix + strings.Join(missing[:min(3, len(missing))], ", ")}
+		}
+		summary := fmt.Sprintf("The local evaluator matched %d of %d key points.", hits, len(question.KeyPoints))
+		if modelErr != nil && !errors.Is(modelErr, agent.ErrNotConfigured) {
+			summary += " The model was unavailable, so local scoring was used."
+		}
+		return domain.Evaluation{Score: score, Summary: summary, Strengths: strengths, Improvements: improvements, Source: "local"}
 	}
 	strengths := []string{"回答已覆盖部分核心概念"}
 	if len(matched) > 0 {
@@ -472,6 +662,118 @@ func localEvaluate(question domain.Question, answer string, modelErr error, inte
 		summary += " 大模型暂不可用，本题已自动降级评分。"
 	}
 	return domain.Evaluation{Score: score, Summary: summary, Strengths: strengths, Improvements: improvements, Source: "local"}
+}
+
+func standardAnswerCoverageScore(answer, standardAnswer string) int {
+	answerRunes := compactComparableRunes(answer)
+	standardRunes := compactComparableRunes(standardAnswer)
+	if len(answerRunes) == 0 || len(standardRunes) == 0 {
+		return 0
+	}
+	answerText := string(answerRunes)
+	standardText := string(standardRunes)
+	if strings.Contains(answerText, standardText) {
+		return 100
+	}
+	if len(standardRunes) == 1 {
+		if strings.Contains(answerText, standardText) {
+			return 100
+		}
+		return 20
+	}
+	answerPairs := map[string]bool{}
+	for index := 0; index < len(answerRunes)-1; index++ {
+		answerPairs[string(answerRunes[index:index+2])] = true
+	}
+	standardPairs := map[string]bool{}
+	for index := 0; index < len(standardRunes)-1; index++ {
+		standardPairs[string(standardRunes[index:index+2])] = true
+	}
+	hits := 0
+	for pair := range standardPairs {
+		if answerPairs[pair] {
+			hits++
+		}
+	}
+	return 20 + hits*80/max(1, len(standardPairs))
+}
+
+func compactComparableRunes(value string) []rune {
+	return []rune(strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, value))
+}
+
+func inProgressEvaluation(evaluation domain.Evaluation, interviewerSkillID, outputLanguage string) domain.Evaluation {
+	if isEnglishInterview(outputLanguage) {
+		evaluation.Summary = "This answer has useful starting points, but it has not reached the passing threshold yet."
+		evaluation.Strengths = []string{"You made a concrete attempt at the question."}
+		evaluation.Improvements = []string{"Continue with the interviewer's follow-up without relying on the reference answer."}
+		if interviewerSkillID == "vera-challenger" {
+			evaluation.Summary = "The answer is not precise enough to pass yet; the next question will test the missing reasoning directly."
+		}
+		return evaluation
+	}
+	evaluation.Summary = "当前回答已有可用思路，但尚未达到通过标准，我会继续追问最关键的缺口。"
+	evaluation.Strengths = []string{"已经对当前问题作出了明确尝试"}
+	evaluation.Improvements = []string{"请直接回应面试官的下一条追问，不依赖标准答案继续完善推理"}
+	if interviewerSkillID == "vera-challenger" {
+		evaluation.Summary = "当前回答还不够精确，尚未达到通过标准；下一问会直接检验缺失的推理。"
+	}
+	return evaluation
+}
+
+func followUpLeaksAnswer(followUp string, question domain.Question) bool {
+	normalized := strings.ToLower(strings.TrimSpace(followUp))
+	if normalized == "" {
+		return false
+	}
+	for _, group := range question.KeyPoints {
+		for _, term := range strings.FieldsFunc(group, func(r rune) bool { return r == '|' || r == '/' }) {
+			term = strings.ToLower(strings.TrimSpace(term))
+			if len([]rune(term)) >= 2 && strings.Contains(normalized, term) {
+				return true
+			}
+		}
+	}
+	standard := strings.ToLower(strings.TrimSpace(question.StandardAnswer))
+	return len([]rune(standard)) >= 8 && strings.Contains(normalized, standard)
+}
+
+func buildFollowUpQuestion(question domain.Question, interviewerSkillID, outputLanguage string) string {
+	focus := "the most important missing technical detail"
+	if len(question.Tags) > 0 {
+		focus = strings.Join(question.Tags, ", ")
+	}
+	if isEnglishInterview(outputLanguage) {
+		switch interviewerSkillID {
+		case "vera-challenger":
+			return fmt.Sprintf("That is not specific enough yet. Address this gap directly: %s. What is your precise conclusion and technical basis?", focus)
+		case "atlas-architect":
+			return fmt.Sprintf("Please go one level deeper on %s: what constraints, trade-offs, and failure boundaries would shape your design?", focus)
+		case "socrates-guide":
+			return fmt.Sprintf("Let's reason from %s: why does it matter, and what would break if that assumption did not hold?", focus)
+		default:
+			return fmt.Sprintf("You have part of it. Could you expand on %s with the mechanism and one concrete example?", focus)
+		}
+	}
+	switch interviewerSkillID {
+	case "vera-challenger":
+		return fmt.Sprintf("目前还不够具体。请直接补齐这个缺口：%s。你的明确结论和技术依据分别是什么？", focus)
+	case "atlas-architect":
+		return fmt.Sprintf("请围绕「%s」再深入一层：设计时有哪些约束、取舍和失效边界？", focus)
+	case "socrates-guide":
+		return fmt.Sprintf("我们从「%s」继续推导：它为什么重要，如果这个前提不成立会发生什么？", focus)
+	default:
+		return fmt.Sprintf("你已经答到了一部分。能否围绕「%s」补充机制，并给一个具体例子？", focus)
+	}
+}
+
+func isEnglishInterview(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "en")
 }
 
 func buildReport(session *domain.Session) domain.Report {

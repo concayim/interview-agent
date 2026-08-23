@@ -46,11 +46,12 @@ import { startRealtimeSpeech } from './speech'
 import type { RealtimeSpeechSession } from './speech'
 import { InterviewVoicePlayer } from './tts'
 import { deriveAvatarMode } from './avatar-state'
+import { buildCompletionSpeech, buildFollowUpSpeech, buildInterviewOpeningSpeech, buildNextQuestionSpeech, isEnglishInterview } from './interview-language'
 import type { Difficulty, Evaluation, KnowledgeBase, Language, LearningResource, ModelConfig, QAItem, Question, Report, Resume, Session, Skill, SkillCatalog } from './types'
 
 type Screen = 'setup' | 'interview' | 'review' | 'learning' | 'knowledge'
 type IntentMessage = { id: string; role: 'candidate' | 'assistant'; text: string; intent: string }
-type Turn = { question: Question; answer: string; evaluation: Evaluation; sideMessages?: IntentMessage[] }
+type Turn = { question: Question; questionNumber: number; followUp: boolean; answer: string; evaluation: Evaluation; sideMessages?: IntentMessage[] }
 type Toast = { type: 'success' | 'error'; message: string }
 type SpeechMode = 'idle' | 'connecting' | 'recording' | 'finalizing'
 
@@ -61,6 +62,7 @@ const languageOptions: { value: Language; label: string; short: string; caption:
   { value: 'java', label: 'Java', short: 'J', caption: 'JVM · Spring · 分布式', color: '#ffb46e' },
   { value: 'python', label: 'Python', short: 'Py', caption: '语言 · 异步 · 服务端', color: '#e8d875' },
   { value: 'cpp', label: 'C++', short: 'C++', caption: '内存 · 并发 · 性能', color: '#ac9cff' },
+  { value: 'agent-engineering', label: 'Agent 开发工程师', short: 'Agent', caption: 'Agent · RAG · 工具调用', color: '#59d4b5' },
 ]
 
 const difficultyOptions: { value: Difficulty; label: string; caption: string }[] = [
@@ -123,7 +125,7 @@ function App() {
         )}
         {screen === 'review' && report && <ReviewScreen report={report} onRestart={restart} />}
         {screen === 'learning' && <LearningPage catalog={catalog} notify={setToast} />}
-        {screen === 'knowledge' && <KnowledgePage notify={setToast} />}
+        {screen === 'knowledge' && <KnowledgePage notify={setToast} onBack={restart} />}
       </main>
       <SettingsDrawer open={settingsOpen} value={modelConfig} onClose={() => setSettingsOpen(false)} onSaved={setModelConfig} notify={setToast} />
       {toast && <div className={`toast toast-${toast.type}`}>{toast.type === 'success' ? <Check size={18} /> : <CircleAlert size={18} />}{toast.message}</div>}
@@ -318,8 +320,8 @@ function Setup({ catalog, resume, onResume, onStart, modelReady, notify }: { cat
           <label className="field-label">面试难度</label>
           <div className="difficulty-row">{difficultyOptions.map((option) => <button key={option.value} className={difficulty === option.value ? 'selected' : ''} onClick={() => setDifficulty(option.value)}><strong>{option.label}</strong><small>{option.caption}</small></button>)}</div>
           <label className="foundation-toggle"><input type="checkbox" checked={includeFoundation} onChange={(event) => setIncludeFoundation(event.target.checked)} /><span><LibraryBig size={16} /><strong>混入计算机基础公共库</strong><small>每场加入 1–2 道操作系统、网络、数据库或分布式基础题</small></span><i /></label>
-          <label className="foundation-toggle"><input type="checkbox" checked={videoEnabled} onChange={(event) => setVideoEnabled(event.target.checked)} /><span>{videoEnabled ? <Video size={16} /> : <VideoOff size={16} />}<strong>开启视频面试</strong><small>进入面试后可选择摄像头；语音输入支持中文和英文</small></span><i /></label>
-          <div className="count-row"><span><Mic size={16} />语音语言</span><div>{[{ value: 'zh-CN', label: '中文' }, { value: 'en-US', label: 'English' }].map((option) => <button key={option.value} className={speechLanguage === option.value ? 'selected' : ''} onClick={() => setSpeechLanguage(option.value)}>{option.label}</button>)}</div></div>
+          <label className="foundation-toggle"><input type="checkbox" checked={videoEnabled} onChange={(event) => setVideoEnabled(event.target.checked)} /><span>{videoEnabled ? <Video size={16} /> : <VideoOff size={16} />}<strong>开启视频面试</strong><small>进入面试后可选择摄像头；面试题、实时识别和朗读支持中文或英文</small></span><i /></label>
+          <div className="count-row"><span><Mic size={16} />面试语言</span><div>{[{ value: 'zh-CN', label: '中文' }, { value: 'en-US', label: 'English' }].map((option) => <button key={option.value} className={speechLanguage === option.value ? 'selected' : ''} onClick={() => setSpeechLanguage(option.value)}>{option.label}</button>)}</div></div>
           {difficulty === 'mixed' && <div className="count-row"><span><MessageSquareText size={16} />题目数量</span><div>{[3, 5, 6].map((count) => <button key={count} className={questionCount === count ? 'selected' : ''} onClick={() => setQuestionCount(count)}>{count} 题</button>)}</div></div>}
           <button className="primary-action" onClick={start} disabled={starting || !catalog}>{starting ? <LoaderCircle className="spin" size={19} /> : <Sparkles size={18} />}开始模拟面试<ArrowRight size={18} /></button>
           <div className="start-hint"><span><Clock3 size={14} />约 {questionCount * 3}–{questionCount * 5} 分钟</span><span><Bot size={14} />{modelReady ? 'AI 深度点评' : '本地关键点评分'}</span></div>
@@ -386,7 +388,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
     })
   }
   useEffect(() => {
-    const opening = `你好，${session.candidateName}。${session.interviewerOpening}${session.currentQuestion ? `。第一题，${session.currentQuestion.prompt}` : ''}`
+    const opening = buildInterviewOpeningSpeech(session.speechLanguage, session.candidateName, session.interviewerOpening, session.currentQuestion?.prompt)
     const firstID = session.currentQuestion ? `opening:${session.currentQuestion.id}` : `opening:${session.id}`
     if (turns.length === 0 && sideMessages.length === 0) speak(opening, firstID)
     else speak(currentVoice, currentVoiceId)
@@ -401,7 +403,7 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       const question = session.currentQuestion
       window.setTimeout(() => setSubmitStage((stage) => stage ? '生成面试官反馈' : stage), 600)
       const result = await api.answer(session.id, trimmed, Math.floor((Date.now() - questionStartedAt) / 1000))
-      setSubmitStage(result.accepted ? '更新题目进度' : '组织追问回复')
+      setSubmitStage(result.accepted ? (result.requiresFollowUp ? '组织细化追问' : '更新题目进度') : '组织追问回复')
       setAnswer('')
       if (!result.accepted) {
         setSideMessages((previous) => [
@@ -413,14 +415,17 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       }
       const evaluation = result.evaluation
       if (!evaluation) throw new Error('本次回复缺少评价结果')
-      setTurns((previous) => [...previous, { question, answer: trimmed, evaluation, sideMessages }])
+      setTurns((previous) => [...previous, { question, questionNumber: session.current + 1, followUp: result.requiresFollowUp, answer: trimmed, evaluation, sideMessages }])
       setSideMessages([])
       if (result.completed && result.report) {
-        speak(`${evaluation.summary}。本场面试已经完成，完整复盘已为你整理好。`, `complete:${question.id}`)
+        speak(buildCompletionSpeech(session.speechLanguage, evaluation.summary), `complete:${question.id}`)
         setReadyReport(result.report)
         setSession({ ...session, current: result.current, status: 'completed', currentQuestion: undefined })
       } else if (result.nextQuestion) {
-        speak(`${evaluation.summary}。下一题，${result.nextQuestion.prompt}`, result.nextQuestion.id)
+        const transitionSpeech = result.requiresFollowUp
+          ? buildFollowUpSpeech(session.speechLanguage, evaluation.summary, result.nextQuestion.prompt)
+          : buildNextQuestionSpeech(session.speechLanguage, evaluation.summary, result.nextQuestion.prompt)
+        speak(transitionSpeech, result.nextQuestion.id)
         setSession({ ...session, current: result.current, currentQuestion: result.nextQuestion })
         setQuestionStartedAt(Date.now())
       }
@@ -486,8 +491,8 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
       </header>
       <div className="interview-layout">
         <section className="conversation">
-          <div className="conversation-intro"><span><Bot size={21} /></span><div><strong>{session.interviewerName}</strong><p>你好，{session.candidateName}。{session.interviewerOpening}</p></div></div>
-          {turns.map((turn, index) => <TurnCard key={turn.question.id} turn={turn} index={index + 1} interviewerName={session.interviewerName} />)}
+          <div className="conversation-intro"><span><Bot size={21} /></span><div><strong>{session.interviewerName}</strong><p>{buildInterviewOpeningSpeech(session.speechLanguage, session.candidateName, session.interviewerOpening)}</p></div></div>
+          {turns.map((turn) => <TurnCard key={turn.question.id} turn={turn} interviewerName={session.interviewerName} />)}
           {session.currentQuestion && (
             <div className="question-message">
               <div className="message-avatar"><Bot size={18} /></div>
@@ -500,21 +505,21 @@ function InterviewScreen({ session, turns, setTurns, setSession, onFinish, onBac
         </section>
         <aside className="interview-aside">
           <Suspense fallback={<div className="avatar-stage"><div className="avatar-loading">正在唤醒面试官</div></div>}><AvatarStage mode={avatarMode} name={session.interviewerName} /></Suspense>
-          {session.videoEnabled && <div className="video-card">{cameraStream ? <video ref={videoRef} autoPlay muted playsInline /> : <div><VideoOff size={21} /><p>{cameraError || '正在请求摄像头权限…'}</p></div>}<span>{session.speechLanguage === 'en-US' ? 'English interview' : '中文面试'} · 火山实时语音识别</span></div>}
+          {session.videoEnabled && <div className="video-card">{cameraStream ? <video ref={videoRef} autoPlay muted playsInline /> : <div><VideoOff size={21} /><p>{cameraError || '正在请求摄像头权限…'}</p></div>}<span>{isEnglishInterview(session.speechLanguage) ? 'English interview' : '中文面试'} · 火山实时语音识别</span></div>}
         </aside>
       </div>
       {session.currentQuestion && (
-        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${speechMode !== 'idle' ? 'active' : ''}`} onClick={toggleSpeech} type="button" disabled={submitting || speechMode === 'connecting' || speechMode === 'finalizing'}><Mic size={16} />{speechButtonText(speechMode)}</button><button onClick={submit} disabled={!answer.trim() || submitting || speechMode !== 'idle'}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
+        <div className="composer-wrap"><div className="composer"><textarea autoFocus value={answer} maxLength={8000} onChange={(event) => setAnswer(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit() }} placeholder="和面试官说说你的思路…" /><div className="composer-flow">{submitting && ['理解你的意图', '生成面试官反馈', '组织细化追问', '更新题目进度'].map((stage) => <span key={stage} className={submitStage === stage ? 'active' : ''}>{stage}</span>)}</div><div className="composer-footer"><span>{answer.length > 0 ? `${answer.length} 字` : '⌘ / Ctrl + Enter 发送'}</span><div><button className={`speech-button ${speechMode !== 'idle' ? 'active' : ''}`} onClick={toggleSpeech} type="button" disabled={submitting || speechMode === 'connecting' || speechMode === 'finalizing'}><Mic size={16} />{speechButtonText(speechMode)}</button><button onClick={submit} disabled={!answer.trim() || submitting || speechMode !== 'idle'}>{submitting ? <LoaderCircle className="spin" size={18} /> : <Send size={17} />}{submitting ? '处理中' : '发送'}</button></div></div></div></div>
       )}
     </div>
   )
 }
 
-function TurnCard({ turn, index, interviewerName }: { turn: Turn; index: number; interviewerName: string }) {
+function TurnCard({ turn, interviewerName }: { turn: Turn; interviewerName: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="turn-block">
-      <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className="message-content"><div className="message-meta"><strong>{interviewerName}</strong><span>第 {index} 题</span></div><p>{turn.question.prompt}</p></div></div>
+      <div className="question-message completed-question"><div className="message-avatar"><Bot size={18} /></div><div className="message-content"><div className="message-meta"><strong>{interviewerName}</strong><span>第 {turn.questionNumber} 题{turn.followUp ? '追问' : ''}</span></div><p>{turn.question.prompt}</p></div></div>
       {turn.sideMessages?.map((message) => <IntentBubble key={message.id} message={message} interviewerName={interviewerName} archived />)}
       <div className="answer-message"><div className="answer-bubble"><p>{turn.answer}</p></div><div className="user-avatar"><UserRound size={17} /></div></div>
       <button className={`inline-evaluation ${open ? 'open' : ''}`} onClick={() => setOpen(!open)}><span className={`score-dot score-${scoreBand(turn.evaluation.score)}`}>{turn.evaluation.score}</span><span><strong>{turn.evaluation.summary}</strong><small>{turn.evaluation.source === 'llm' ? 'Eino AI 点评' : '本地关键点评分'} · 点击{open ? '收起' : '展开'}</small></span><ChevronDown size={18} />
@@ -595,7 +600,7 @@ function LearningPage({ catalog, notify }: { catalog?: SkillCatalog; notify: (va
   </div>
 }
 
-function KnowledgePage({ notify }: { notify: (value: Toast) => void }) {
+export function KnowledgePage({ notify, onBack }: { notify: (value: Toast) => void; onBack: () => void }) {
   const [bases, setBases] = useState<KnowledgeBase[]>([])
   const [baseId, setBaseId] = useState('')
   const [items, setItems] = useState<QAItem[]>([])
@@ -624,7 +629,7 @@ function KnowledgePage({ notify }: { notify: (value: Toast) => void }) {
   }
   const currentBase = bases.find((base) => base.id === baseId)
   return <div className="knowledge-page page-enter">
-    <header className="library-hero"><div><span className="eyebrow"><LibraryBig size={14} /> Knowledge Base</span><h1>每次出题，都让知识库<em>更好检索。</em></h1><p>语言库彼此独立，计算机基础作为公共库。每次面试实际出过的题都会累计出题次数并沉淀为 QA。</p></div><button className="secondary-action" onClick={() => setAdding(!adding)}>{adding ? <X size={17} /> : <Sparkles size={17} />}{adding ? '取消' : '新增 QA'}</button></header>
+    <header className="library-hero"><div><span className="eyebrow"><LibraryBig size={14} /> Knowledge Base</span><h1>每次出题，都让知识库<em>更好检索。</em></h1><p>语言库彼此独立，计算机基础作为公共库。每次面试实际出过的题都会累计出题次数并沉淀为 QA。</p></div><div className="library-hero-actions"><KnowledgeBackButton onBack={onBack} /><button className="secondary-action" onClick={() => setAdding(!adding)}>{adding ? <X size={17} /> : <Sparkles size={17} />}{adding ? '取消' : '新增 QA'}</button></div></header>
     <div className="knowledge-layout"><aside className="base-list"><span className="aside-label">知识库</span>{bases.map((base) => <button key={base.id} className={baseId === base.id ? 'selected' : ''} onClick={() => { setBaseId(base.id); setQuery('') }} style={{ '--base-color': base.accent } as CSSProperties}><span>{base.language === 'foundation' ? 'CS' : languageOptions.find((option) => option.value === base.language)?.short ?? base.language}</span><div><strong>{base.name}</strong><small>{base.itemCount} 个 QA · 已出题 {base.issuedCount} 次</small></div></button>)}</aside><section className="knowledge-main">
       {currentBase && <div className="base-summary"><span className="heading-icon violet"><LibraryBig size={19} /></span><div><h2>{currentBase.name}</h2><p>{currentBase.description}</p><div>{currentBase.topics.map((topic) => <span key={topic}>{topic}</span>)}</div></div></div>}
       {adding && <div className="qa-form"><label>问题<input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="输入希望沉淀的问题" /></label><label>标准答案<textarea value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="输入可复盘、可检索的标准答案" /></label><button className="primary-action compact" disabled={!question.trim() || !answer.trim()} onClick={addQA}><Check size={16} />写入知识库</button></div>}
@@ -632,6 +637,10 @@ function KnowledgePage({ notify }: { notify: (value: Toast) => void }) {
       {loading ? <div className="empty-state compact"><LoaderCircle className="spin" size={23} /></div> : <div className="qa-list">{items.map((item) => <article key={item.id} className={openItem === item.id ? 'open' : ''}><button onClick={() => setOpenItem(openItem === item.id ? undefined : item.id)}><span className="qa-source">{item.source === 'manual' ? '手动' : item.source === 'interview' ? '面试沉淀' : '内置'}</span><div><h3>{item.question}</h3><small>{item.tags.join(' · ')}{item.issuedCount > 0 && ` · 已出题 ${item.issuedCount} 次`}</small></div><ChevronDown size={18} /></button>{openItem === item.id && <div className="qa-answer"><span>标准答案</span><p>{item.answer}</p><div>{item.keyPoints.map((point) => <em key={point}>{point.split('/')[0]}</em>)}</div></div>}</article>)}</div>}
     </section></div>
   </div>
+}
+
+export function KnowledgeBackButton({ onBack }: { onBack: () => void }) {
+  return <button className="secondary-action" onClick={onBack}><ArrowLeft size={17} />返回面试准备</button>
 }
 
 function SearchIcon() { return <Target size={16} /> }

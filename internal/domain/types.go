@@ -36,11 +36,12 @@ func (q Question) Public() PublicQuestion {
 }
 
 type Evaluation struct {
-	Score        int      `json:"score"`
-	Summary      string   `json:"summary"`
-	Strengths    []string `json:"strengths"`
-	Improvements []string `json:"improvements"`
-	Source       string   `json:"source"`
+	Score            int      `json:"score"`
+	Summary          string   `json:"summary"`
+	Strengths        []string `json:"strengths"`
+	Improvements     []string `json:"improvements"`
+	FollowUpQuestion string   `json:"followUpQuestion,omitempty"`
+	Source           string   `json:"source"`
 }
 
 type AnswerRecord struct {
@@ -73,6 +74,9 @@ type Session struct {
 	Questions          []Question     `json:"-"`
 	Current            int            `json:"current"`
 	Answers            []AnswerRecord `json:"answers"`
+	PreviousAnswers    []string       `json:"-"`
+	FollowUpPrompt     string         `json:"-"`
+	PendingElapsed     int            `json:"-"`
 	StartedAt          time.Time      `json:"startedAt"`
 	CompletedAt        *time.Time     `json:"completedAt,omitempty"`
 }

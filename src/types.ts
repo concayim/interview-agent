@@ -21,6 +21,7 @@ export type Evaluation = {
   summary: string
   strengths: string[]
   improvements: string[]
+  followUpQuestion?: string
   source: 'local' | 'llm'
 }
 
@@ -38,7 +39,7 @@ export type Session = {
   includeFoundation: boolean
   videoEnabled: boolean
   speechLanguage: string
-  questionSource: 'model' | 'built-in' | string
+  questionSource: 'knowledge' | 'model' | 'built-in' | string
   status: 'active' | 'completed'
   current: number
   total: number
@@ -73,6 +74,7 @@ export type Report = {
 export type AnswerResult = {
   evaluation?: Evaluation
   completed: boolean
+  requiresFollowUp: boolean
   nextQuestion?: Question
   current: number
   total: number
